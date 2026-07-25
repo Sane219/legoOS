@@ -351,3 +351,8 @@ in `docker-compose.yml`, the `sessions` schema, and this onboarding pass (README
    workflow, save a 2-node graph, run it: `200` with `status: "succeeded"` and correct per-node
    output — confirming the executor extraction didn't change behavior.
 9. Roadmap: all of Phase 1 is now checked off in [roadmap.md](roadmap.md).
+10. **CI** — confirmed live on a genuinely clean environment (no local cache to hide the migration
+    gotcha above): pushing this commit triggered run
+    [`30158209789`](https://github.com/Sane219/legoOS/actions/runs/30158209789), where `backend`
+    (57s, building and testing all four Rust crates plus all 4 migrations) and `frontend` (44s)
+    both passed.

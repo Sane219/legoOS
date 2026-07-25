@@ -252,3 +252,6 @@ asynchronous.
    `workspaces.rs`, `workflows.rs`), each of which only uses a subset of its helpers — Rust warns
    `dead_code` per binary for the unused ones, so the module carries a documented
    `#![allow(dead_code)]`, the standard pattern for cross-binary shared test helpers.
+7. **CI** — confirmed live: pushing this commit triggered run
+   [`30156597113`](https://github.com/Sane219/legoOS/actions/runs/30156597113), where `backend`
+   (1m15s, including the new migration and all 31 tests) and `frontend` (40s) both passed.

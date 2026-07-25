@@ -127,8 +127,11 @@ does not know or care whether Postgres is reached via Compose or any other host.
    ```
 8. **`.github/workflows/ci.yml`** — parsed successfully with PyYAML (the `on:` key reads back as
    the boolean `True` under PyYAML's YAML 1.1 rules, which is expected and harmless — GitHub's own
-   parser treats `on:` as the literal trigger key). On the next push to `main` (or a PR into it),
-   GitHub Actions will: check out the repo, install the stable Rust toolchain with `clippy` and
-   `rustfmt`, start a `postgres:16-alpine` service container, install `sqlx-cli` and run migrations
-   against it, then run `cargo fmt -- --check`, `cargo clippy --all-targets --all -- -D warnings`,
-   and `cargo test --all` — failing the job if any step fails.
+   parser treats `on:` as the literal trigger key). Confirmed live: pushing this commit triggered
+   run [`30153552094`](https://github.com/Sane219/legoOS/actions/runs/30153552094) on
+   `Sane219/legoOS`, which passed end to end in 2m44s — checkout, Rust toolchain + clippy/rustfmt
+   install, a real `postgres:16-alpine` service container, `sqlx-cli` install, migrations, `cargo
+   fmt -- --check`, `cargo clippy --all-targets --all -- -D warnings`, and `cargo test --all` all
+   green. This is also the first real Docker-backed confirmation that the Postgres service
+   container + migration step work, since the local sandbox this was built in has no usable Docker
+   CLI (see the environment note above).

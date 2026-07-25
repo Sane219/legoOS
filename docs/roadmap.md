@@ -10,13 +10,13 @@ file up to date — see [CLAUDE.md](../CLAUDE.md) rules.
 - [ ] Set up the Next.js frontend app with Tailwind CSS configured
 - [ ] Write the initial `docker-compose.yml` (Postgres, Redis, Qdrant, api, frontend)
 - [ ] Design and migrate the initial Postgres schema (users, workspaces, sessions)
-- [ ] Implement user signup/login with password hashing and session/JWT auth
+- [x] Implement user signup/login with password hashing and session/JWT auth
 - [ ] Implement workspace creation and membership
 - [ ] Build a basic authenticated frontend shell (login, dashboard layout, nav)
 - [ ] Define the workflow/node/edge data model in Postgres
 - [ ] Build DAG executor v1: linear + branching node execution, no queue yet (in-process)
 - [ ] Build a minimal React Flow canvas that can create and save a simple workflow
-- [ ] Set up GitHub Actions CI: `cargo build`, `cargo test`, `cargo clippy -- -D warnings`
+- [x] Set up GitHub Actions CI: `cargo build`, `cargo test`, `cargo clippy -- -D warnings`
 - [ ] Set up GitHub Actions CI: frontend lint, typecheck, and test
 - [ ] Write developer setup docs so a fresh clone can run `docker compose up` successfully
 

@@ -77,3 +77,58 @@ This is deliberately generic — the specifics change per feature, but the shape
 This template will fill out differently for a backend node type versus a frontend screen versus
 an infra change — the point is that every completed roadmap item has some evidence attached to it
 beyond "it compiled."
+
+## Step 1 Verification Log
+
+Verification for the project skeleton + auth deliverable (`apps/api`, `docker-compose.yml`,
+`apps/api/Dockerfile`, `.github/workflows/ci.yml`).
+
+**Environment note:** the sandbox this was built in has no working `docker` CLI (WSL2 distro
+without Docker Desktop's WSL integration enabled), so `docker compose up --build` itself could not
+be executed here. To still verify the application logic end-to-end, a local PostgreSQL 16 server
+was extracted from the Ubuntu `postgresql-16` `.deb` package (no root required — `dpkg-deb -x`)
+and run on a non-default port. `docker-compose.yml` and the `Dockerfile` were reviewed by hand for
+correctness (service names, health check, env vars, build context, migration-embedding). Anyone
+with a working Docker install can run `docker compose up --build` directly — the app code itself
+does not know or care whether Postgres is reached via Compose or any other host.
+
+1. **`cargo build`** — clean build, 0 errors.
+2. **`cargo fmt -- --check`** — clean after one `cargo fmt` pass; no diffs on recheck.
+3. **`cargo clippy --all-targets --all -- -D warnings`** — `cargo clippy: No issues found`.
+4. **`cargo test --all`** (against the locally-extracted Postgres) — 6/6 passed:
+   ```
+   running 6 tests
+   test me_without_token_returns_401 ... ok
+   test me_with_valid_token_succeeds ... ok
+   test register_succeeds ... ok
+   test login_succeeds ... ok
+   test login_wrong_password_fails ... ok
+   test register_duplicate_email_fails ... ok
+
+   test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.63s
+   ```
+5. **`sqlx migrate run`** (via `sqlx-cli`, installed with `--features postgres,rustls`) — applied
+   `0001_create_users` cleanly against a fresh database.
+6. **Ran the compiled server directly** (`cargo run --bin api`) against the local Postgres and
+   exercised every endpoint with `curl`:
+   - `GET /health` → `200 {"status":"ok"}`
+   - `POST /api/auth/register` (new email) → `200` with a JWT
+   - `POST /api/auth/login` (same credentials) → `200` with a JWT
+   - `GET /api/auth/me` with `Authorization: Bearer <token>` → `200` with the user's id/email/
+     created_at
+   - `GET /api/auth/me` with no header → `401 {"error":"missing or invalid authorization token"}`
+7. **Structured request logging** — confirmed `tower_http::trace::TraceLayer` logs
+   method/uri/status/latency at the default `RUST_LOG=info` level (its default span level is
+   `DEBUG`, which would otherwise silently drop these logs — `TraceLayer` is explicitly configured
+   with `DefaultMakeSpan`/`DefaultOnResponse` at `Level::INFO` in `main.rs` to fix this):
+   ```
+   INFO request{method=GET uri=/health version=HTTP/1.1}: tower_http::trace::on_response: finished processing request latency=0 ms status=200
+   INFO request{method=POST uri=/api/auth/login version=HTTP/1.1}: tower_http::trace::on_response: finished processing request latency=542 ms status=200
+   ```
+8. **`.github/workflows/ci.yml`** — parsed successfully with PyYAML (the `on:` key reads back as
+   the boolean `True` under PyYAML's YAML 1.1 rules, which is expected and harmless — GitHub's own
+   parser treats `on:` as the literal trigger key). On the next push to `main` (or a PR into it),
+   GitHub Actions will: check out the repo, install the stable Rust toolchain with `clippy` and
+   `rustfmt`, start a `postgres:16-alpine` service container, install `sqlx-cli` and run migrations
+   against it, then run `cargo fmt -- --check`, `cargo clippy --all-targets --all -- -D warnings`,
+   and `cargo test --all` — failing the job if any step fails.

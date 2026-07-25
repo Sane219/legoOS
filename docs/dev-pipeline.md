@@ -299,3 +299,7 @@ Verification for the React Flow canvas (`@xyflow/react`, `components/WorkflowCan
    to exercise every UI mechanic (multi-node chain, per-node config, edge conditions, save,
    reload-persistence, run); the DAG executor's branching/skip semantics themselves are already
    covered by the 8 unit tests and the live curl run in the Step 4 log.
+6. **CI** — confirmed live: pushing this commit triggered run
+   [`30157753436`](https://github.com/Sane219/legoOS/actions/runs/30157753436), where `backend`
+   (51s) and `frontend` (43s, including the new `workflow-graph.test.ts` and the production build)
+   both passed.

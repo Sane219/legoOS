@@ -1,3 +1,7 @@
+// Shared across multiple test binaries; not every binary that includes this module uses
+// every helper, which would otherwise warn per-binary.
+#![allow(dead_code)]
+
 use api::{routes, state::AppState};
 use axum::{
     body::Body,
@@ -60,6 +64,24 @@ pub async fn register(app: axum::Router, email: &str, password: &str) -> String 
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     json_body(response).await["token"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+/// Creates a workspace owned by `token`'s user and returns its id.
+pub async fn create_workspace(app: axum::Router, token: &str, name: &str) -> String {
+    let response = app
+        .oneshot(authed_json_request(
+            "POST",
+            "/api/workspaces",
+            token,
+            json!({ "name": name }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    json_body(response).await["id"]
         .as_str()
         .unwrap()
         .to_string()

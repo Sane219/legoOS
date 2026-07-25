@@ -13,8 +13,8 @@ file up to date — see [CLAUDE.md](../CLAUDE.md) rules.
 - [x] Implement user signup/login with password hashing and session/JWT auth
 - [x] Implement workspace creation and membership
 - [x] Build a basic authenticated frontend shell (login, dashboard layout, nav)
-- [ ] Define the workflow/node/edge data model in Postgres
-- [ ] Build DAG executor v1: linear + branching node execution, no queue yet (in-process)
+- [x] Define the workflow/node/edge data model in Postgres
+- [x] Build DAG executor v1: linear + branching node execution, no queue yet (in-process)
 - [ ] Build a minimal React Flow canvas that can create and save a simple workflow
 - [x] Set up GitHub Actions CI: `cargo build`, `cargo test`, `cargo clippy -- -D warnings`
 - [x] Set up GitHub Actions CI: frontend lint, typecheck, and test

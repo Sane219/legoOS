@@ -23,7 +23,7 @@ pub struct AddMemberRequest {
     pub email: String,
 }
 
-async fn member_role(
+pub(crate) async fn member_role(
     pool: &PgPool,
     workspace_id: Uuid,
     user_id: Uuid,

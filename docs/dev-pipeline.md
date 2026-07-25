@@ -210,3 +210,45 @@ no consumer yet; add one if/when refresh tokens or server-side revocation are ne
 5. **CI** — confirmed live: pushing this commit triggered run
    [`30155716475`](https://github.com/Sane219/legoOS/actions/runs/30155716475), where `backend`
    (52s, including the new migration) and `frontend` (37s) both passed.
+
+## Step 4 Verification Log
+
+Verification for the workflow data model + DAG executor v1 (migration `0003_create_workflows`,
+`apps/api/src/dag.rs`, `apps/api/src/workflows.rs`, `/api/workspaces/{id}/workflows/**`).
+
+Design note: `apps/api/src/dag.rs` is a pure, synchronous, DB-free module (`execute(nodes, edges)
+-> ExecutionResult`) — no async, no I/O. `apps/api/src/workflows.rs` is a thin async layer that
+loads a workflow's nodes/edges, calls `dag::execute`, and persists the result. This split makes
+the executor's branching/skip/fan-in logic unit-testable in milliseconds with no database, per
+CLAUDE.md's "always add a test for new node types in the DAG executor" rule. v1 ships three node
+types (`input`, `transform`, `condition`) — enough to prove linear chains and conditional
+branching without pulling in any Phase 2 concern (LLM calls, MCP, a real queue).
+
+Scope note: the roadmap's schema item still isn't fully checked — a `sessions` table remains
+deliberately unbuilt (see the Step 3 log). Also, `workflow_executions.status` only allows
+`succeeded`/`failed` at the DB level (no `running`), since v1 executes synchronously to completion
+within a single request; add `running` in a later migration once Phase 2 makes execution
+asynchronous.
+
+1. **`cargo test --lib dag::`** — 8/8 passed with no database: linear chain propagation/merging,
+   true-branch-runs/false-branch-skipped and the reverse, a condition node defaulting to `false`
+   when its field is missing, fan-in collecting multiple upstream outputs, an unknown node type
+   failing, an upstream failure skipping (not failing) its downstream node while still marking the
+   overall execution failed, and a cycle leaving all its nodes unresolved and failed.
+2. **`sqlx migrate run`** — applied `0003_create_workflows` cleanly on top of `0001`/`0002`.
+3. **`cargo fmt -- --check`** / **`cargo clippy --all-targets --all -- -D warnings`** — clean
+   (clippy caught a real collapsible-if and a needless lifetime in `dag.rs`, both fixed).
+4. **`cargo test --all`** — 31/31 passed (8 dag unit tests + 6 auth + 8 workspace + 9 new workflow
+   integration tests: create, 404-for-non-members, list-scoped-to-workspace, save-then-get,
+   save-replaces-previous-graph, run-a-linear-chain, run-and-record-a-branch-skip,
+   get-a-persisted-execution, run-404-for-non-members).
+5. **Live curl run against the real server** — built an input → condition → (true-branch,
+   false-branch) graph via `PUT .../workflows/{id}` with `flag: true`, then:
+   - `POST .../executions` → `200`, overall `status: "succeeded"`, the true-branch node
+     `"succeeded"` with output `{"branch":"taken-true","result":true}`, the false-branch node
+     `"skipped"` with `output: null` — confirms branching/skip works end to end, not just in tests
+   - `GET .../executions/{execution_id}` → `200`, returns the exact same persisted result
+6. Test-infra note: `tests/common/mod.rs` is now shared by three test binaries (`auth.rs`,
+   `workspaces.rs`, `workflows.rs`), each of which only uses a subset of its helpers — Rust warns
+   `dead_code` per binary for the unused ones, so the module carries a documented
+   `#![allow(dead_code)]`, the standard pattern for cross-binary shared test helpers.

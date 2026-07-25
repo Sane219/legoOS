@@ -1,6 +1,7 @@
 use anyhow::Context;
 use api::{routes, state::AppState};
 use sqlx::postgres::PgPoolOptions;
+use tower_http::cors::CorsLayer;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
 use tracing::Level;
 use tracing_subscriber::EnvFilter;
@@ -28,15 +29,19 @@ async fn main() -> anyhow::Result<()> {
         .context("failed to run migrations")?;
 
     let state = AppState { pool, jwt_secret };
-    let app = routes::build(state).layer(
-        TraceLayer::new_for_http()
-            .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
-            .on_response(
-                DefaultOnResponse::new()
-                    .level(Level::INFO)
-                    .latency_unit(tower_http::LatencyUnit::Millis),
-            ),
-    );
+    let app = routes::build(state)
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+                .on_response(
+                    DefaultOnResponse::new()
+                        .level(Level::INFO)
+                        .latency_unit(tower_http::LatencyUnit::Millis),
+                ),
+        )
+        // ponytail: wide open for local/dev use (auth is a bearer token, not cookies, so this
+        // isn't a CSRF hole yet); scope to known frontend origins during the Phase 5 security pass.
+        .layer(CorsLayer::permissive());
 
     let addr = "0.0.0.0:8080";
     let listener = tokio::net::TcpListener::bind(addr)

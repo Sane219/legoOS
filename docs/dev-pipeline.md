@@ -135,3 +135,41 @@ does not know or care whether Postgres is reached via Compose or any other host.
    green. This is also the first real Docker-backed confirmation that the Postgres service
    container + migration step work, since the local sandbox this was built in has no usable Docker
    CLI (see the environment note above).
+
+## Step 2 Verification Log
+
+Verification for the frontend skeleton (`apps/web`: Next.js + Tailwind, a login/register/dashboard
+shell wired to the Step 1 API, `apps/web/Dockerfile`, frontend CI).
+
+1. **`npm run lint`** (`next lint` via ESLint) — clean. One real issue surfaced and was fixed
+   along the way: the newer `react-hooks/set-state-in-effect` rule flagged `Nav` calling
+   `setState` synchronously inside a `useEffect` to read the auth token from `localStorage`.
+   Rather than suppress it, `lib/auth.ts` now exposes a `useAuthToken()` hook built on React's
+   `useSyncExternalStore` — the correct primitive for syncing component state to an external store
+   like `localStorage`, which also picks up token changes from other tabs via the `storage` event.
+2. **`npm run typecheck`** (`tsc --noEmit`, `strict: true`) — clean, no `any` anywhere.
+3. **`npm run test`** (Vitest + Testing Library) — 4/4 passed, covering `Nav`'s authed/unauthed
+   states and `AuthForm`'s success and error paths.
+4. **`npm run build`** (`next build`, `output: "standalone"`) — succeeds; verified the standalone
+   output actually contains `server.js` and `.next/static`, which is what `apps/web/Dockerfile`
+   copies into the runtime image.
+5. **Real browser end-to-end run** — per this repo's rule to exercise UI changes in an actual
+   browser, not just unit tests: `next start` was run against a locally-running copy of the Step 1
+   API (same local-Postgres setup as the Step 1 log, since Docker still isn't available in this
+   sandbox — see the environment note above), driven with Playwright/Chromium. All of the
+   following passed against the real running app:
+   - `/` while logged out redirects to `/login`
+   - registering a new user redirects to `/dashboard` and renders that user's email/id/joined date
+   - the nav shows "Dashboard"/"Log out" once authed
+   - logging out redirects to `/login`, and `/dashboard` then redirects back to `/login`
+   - logging back in with the same credentials reaches `/dashboard` again
+   - logging in with a wrong password shows "invalid credentials" and stays on `/login`
+
+   This run caught a real bug that no unit test would have: the API had no CORS headers, so the
+   browser silently blocked every cross-origin `fetch` from `localhost:3000` to `localhost:8080`
+   with a preflight failure (curl and the Rust integration tests don't enforce CORS, so Step 1's
+   verification never exercised this path). Fixed in `apps/api/src/main.rs` by adding
+   `tower_http::cors::CorsLayer::permissive()` — marked with a `ponytail:` comment since it's
+   deliberately wide open for local/dev use (auth here is a bearer token the frontend JS attaches
+   explicitly, not a cookie, so this isn't a CSRF hole yet) and needs scoping to known origins
+   during the Phase 5 security pass.

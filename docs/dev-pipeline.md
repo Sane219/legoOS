@@ -173,3 +173,7 @@ shell wired to the Step 1 API, `apps/web/Dockerfile`, frontend CI).
    deliberately wide open for local/dev use (auth here is a bearer token the frontend JS attaches
    explicitly, not a cookie, so this isn't a CSRF hole yet) and needs scoping to known origins
    during the Phase 5 security pass.
+6. **`.github/workflows/ci.yml`** — added a `frontend` job (checkout, Node 20, `npm ci`, lint,
+   typecheck, test, build). Confirmed live: pushing this commit triggered run
+   [`30154453882`](https://github.com/Sane219/legoOS/actions/runs/30154453882), where both the
+   `frontend` job (40s) and `backend` job (1m4s) passed.

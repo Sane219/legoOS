@@ -1,6 +1,6 @@
 # Dev Pipeline
 
-How to run aios locally, how CI works, where tests live, and how to verify a feature actually
+How to run legoOS locally, how CI works, where tests live, and how to verify a feature actually
 works before calling it done.
 
 ## Local Dev Workflow

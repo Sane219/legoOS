@@ -2,14 +2,14 @@
 
 ## Purpose
 
-aios exists to make agentic AI work operable, not just possible. Anyone can wire an LLM to a
+legoOS exists to make agentic AI work operable, not just possible. Anyone can wire an LLM to a
 prompt and call it an agent. Making that agent reliable — observable when it runs, safe when it
 acts, connected to real data and real tools, and cheap enough to run continuously — is a much
-harder and much less solved problem. aios is a self-hosted platform that treats an AI agent as a
+harder and much less solved problem. legoOS is a self-hosted platform that treats an AI agent as a
 piece of infrastructure: something you design visually, version, test, monitor, and trust, the
 same way you'd treat a service in production rather than a one-off script.
 
-Concretely, aios lets you:
+Concretely, legoOS lets you:
 
 - Define agents with their own prompts, tools, and model choice
 - Compose those agents into multi-step workflows using a visual, DAG-based builder
@@ -35,7 +35,7 @@ Concretely, aios lets you:
 - **Self-hosting / privacy-conscious users** who don't want their agent workflows, documents, or
   conversation history living in someone else's SaaS product.
 
-aios is explicitly *not* trying to compete with hosted, consumer-facing chat products on
+legoOS is explicitly *not* trying to compete with hosted, consumer-facing chat products on
 day-one polish. It's trying to be the tool a technical user reaches for when they want an agent
 platform they control end to end.
 

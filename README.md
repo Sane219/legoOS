@@ -1,4 +1,4 @@
-# aios — AI Operating System
+# legoOS — AI Operating System
 
 > A self-hosted platform for building, running, and operating AI agents — visually, safely, and at scale.
 
@@ -8,7 +8,7 @@
 
 ## Overview
 
-**aios** is a self-hosted platform for creating AI agents, building workflows visually, connecting
+**legoOS** is a self-hosted platform for creating AI agents, building workflows visually, connecting
 MCP servers and third-party apps, managing knowledge bases with RAG, giving agents long-term
 memory, running local or cloud LLMs, scheduling jobs, monitoring executions, and collaborating in
 teams. It's the control plane for agentic work: one place to design what an agent can do, watch it
@@ -22,7 +22,7 @@ execution tracing, and cost tracking baked in from the start rather than bolted 
 
 It exists because most of today's tools solve one slice of this problem well: chat UIs don't
 orchestrate multi-step workflows, workflow builders don't have first-class agent memory or RAG,
-and automation platforms aren't built for the non-determinism of LLM-driven steps. aios is being
+and automation platforms aren't built for the non-determinism of LLM-driven steps. legoOS is being
 built to close that gap — self-hosted, inspectable, and owned by the people running it.
 
 ## Key Features
@@ -74,8 +74,8 @@ See [docs/architecture.md](docs/architecture.md) for the full breakdown.
 ### Clone & run
 
 ```bash
-git clone https://github.com/Sane219/aios.git
-cd aios
+git clone https://github.com/Sane219/legoOS.git
+cd legoOS
 docker compose up
 ```
 

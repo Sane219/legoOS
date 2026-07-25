@@ -1,6 +1,6 @@
 # Roadmap
 
-The full phased build plan for aios, as a checklist. Phases are sequential in intent but items
+The full phased build plan for legoOS, as a checklist. Phases are sequential in intent but items
 within a phase can be reordered as needed. Check items off as they're completed, and keep this
 file up to date — see [CLAUDE.md](../CLAUDE.md) rules.
 

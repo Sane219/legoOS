@@ -2,7 +2,7 @@
 
 ## Overview
 
-aios is split into four layers: a **frontend** for designing and observing workflows, an **API**
+legoOS is split into four layers: a **frontend** for designing and observing workflows, an **API**
 for auth, CRUD, and orchestration requests, a **DAG executor** that turns a workflow definition
 into a running execution, and a pool of **workers** that actually perform each step (calling an
 LLM, calling an MCP tool, querying a vector store, etc.). State and coordination live in

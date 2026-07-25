@@ -16,7 +16,7 @@ The core orchestration engine (API, DAG executor, workers) is written in Rust.
   the borrow checker rules out a whole class of concurrency bugs (data races) that would otherwise
   be easy to introduce in a highly concurrent scheduler/worker system.
 - **Alignment with the emerging Rust AI agent ecosystem** — projects like Rig, AutoAgents, and
-  swarms-rs are building agent primitives natively in Rust. Building aios in Rust keeps the door
+  swarms-rs are building agent primitives natively in Rust. Building legoOS in Rust keeps the door
   open to adopting or interoperating with that ecosystem instead of working against it.
 - **Single static binary deployment** — simplifies the Docker images and reduces runtime
   dependency surface compared to a Node or Python service.
@@ -68,7 +68,7 @@ call from Rust workers via HTTP/gRPC.
 
 Called out separately from "Frontend" above because it's the single biggest lever on how fast the
 visual workflow builder can be built: it owns the entire canvas/graph-editing interaction model
-(nodes, edges, drag-to-connect, minimap, zoom), leaving aios to focus on domain-specific node types
+(nodes, edges, drag-to-connect, minimap, zoom), leaving legoOS to focus on domain-specific node types
 and execution overlays rather than reimplementing a diagramming library.
 
 ## Infra: Docker, Kubernetes, Terraform, Prometheus, Grafana, GitHub Actions
@@ -76,7 +76,7 @@ and execution overlays rather than reimplementing a diagramming library.
 - **Docker** — the baseline for local dev (`docker compose up`) and deployment; every service
   (API, executor, workers, Postgres, Redis, Qdrant) runs as a container from day one so local and
   production environments stay close.
-- **Kubernetes** — the Phase 4 target for running aios at scale, once a single Docker Compose host
+- **Kubernetes** — the Phase 4 target for running legoOS at scale, once a single Docker Compose host
   isn't enough (horizontal worker scaling, rolling deploys, self-healing).
 - **Terraform** — infrastructure as code for provisioning the Kubernetes cluster and supporting
   cloud resources reproducibly, rather than hand-configuring infra.

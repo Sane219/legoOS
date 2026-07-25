@@ -11,7 +11,7 @@ file up to date — see [CLAUDE.md](../CLAUDE.md) rules.
 - [ ] Write the initial `docker-compose.yml` (Postgres, Redis, Qdrant, api, frontend)
 - [ ] Design and migrate the initial Postgres schema (users, workspaces, sessions)
 - [x] Implement user signup/login with password hashing and session/JWT auth
-- [ ] Implement workspace creation and membership
+- [x] Implement workspace creation and membership
 - [x] Build a basic authenticated frontend shell (login, dashboard layout, nav)
 - [ ] Define the workflow/node/edge data model in Postgres
 - [ ] Build DAG executor v1: linear + branching node execution, no queue yet (in-process)

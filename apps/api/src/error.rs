@@ -13,6 +13,12 @@ pub enum AppError {
     EmailTaken,
     #[error("missing or invalid authorization token")]
     Unauthorized,
+    #[error("{0}")]
+    Forbidden(String),
+    #[error("{0}")]
+    NotFound(String),
+    #[error("{0}")]
+    Conflict(String),
     #[error("validation error: {0}")]
     Validation(String),
     #[error("internal server error")]
@@ -25,6 +31,9 @@ impl IntoResponse for AppError {
             AppError::InvalidCredentials => (StatusCode::UNAUTHORIZED, self.to_string()),
             AppError::EmailTaken => (StatusCode::CONFLICT, self.to_string()),
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, self.to_string()),
+            AppError::Forbidden(_) => (StatusCode::FORBIDDEN, self.to_string()),
+            AppError::NotFound(_) => (StatusCode::NOT_FOUND, self.to_string()),
+            AppError::Conflict(_) => (StatusCode::CONFLICT, self.to_string()),
             AppError::Validation(_) => (StatusCode::BAD_REQUEST, self.to_string()),
             AppError::Internal(err) => {
                 tracing::error!(error = %err, "internal error");

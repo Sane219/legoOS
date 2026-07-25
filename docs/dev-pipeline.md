@@ -177,3 +177,33 @@ shell wired to the Step 1 API, `apps/web/Dockerfile`, frontend CI).
    typecheck, test, build). Confirmed live: pushing this commit triggered run
    [`30154453882`](https://github.com/Sane219/legoOS/actions/runs/30154453882), where both the
    `frontend` job (40s) and `backend` job (1m4s) passed.
+
+## Step 3 Verification Log
+
+Verification for workspaces & teams (migration `0002_create_workspaces`, `apps/api/src/workspaces.rs`,
+`POST/GET /api/workspaces`, `GET /api/workspaces/{id}`, `GET/POST /api/workspaces/{id}/members`).
+
+Scope note: the roadmap item "Design and migrate the initial Postgres schema (users, workspaces,
+sessions)" is left unchecked — `workspaces` and `workspace_members` are migrated, but a `sessions`
+table was deliberately not added. Auth here is stateless JWT with no server-side session state to
+back (see [decisions.md](decisions.md) / `apps/api/src/jwt.rs`), so a `sessions` table would have
+no consumer yet; add one if/when refresh tokens or server-side revocation are needed.
+
+1. **`sqlx migrate run`** — applied `0002_create_workspaces` cleanly on top of `0001_create_users`.
+2. **`cargo fmt -- --check`** / **`cargo clippy --all-targets --all -- -D warnings`** — clean.
+3. **`cargo test --all`** — 14/14 passed (6 existing auth tests + 8 new workspace tests: create,
+   empty-name validation, list-is-scoped-to-membership, 404-for-non-members, add-member-as-owner
+   plus it showing up in the member list, 403-when-not-owner, 409-on-duplicate-membership, and
+   400-on-unknown-email).
+4. **Live curl run against the real server** (same local-Postgres setup as prior steps, migrated
+   with `sqlx migrate run`) covering the full golden path and every error path:
+   - register two users, create a workspace as the first (owner) — `200`
+   - list workspaces as the owner — `200`, shows the one workspace
+   - get the workspace by id as the owner — `200`
+   - add the second user as a member — `200`, `role: "member"`
+   - list members — `200`, shows both the owner and the new member
+   - the new member (not an owner) tries to add someone else — `403`
+   - adding the same member again — `409`
+   - adding an unknown email — `400`
+   - a third, unrelated user requesting the workspace by id — `404` (not merely 403, so workspace
+     existence isn't leaked to non-members)

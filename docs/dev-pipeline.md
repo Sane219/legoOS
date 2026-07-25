@@ -255,3 +255,47 @@ asynchronous.
 7. **CI** — confirmed live: pushing this commit triggered run
    [`30156597113`](https://github.com/Sane219/legoOS/actions/runs/30156597113), where `backend`
    (1m15s, including the new migration and all 31 tests) and `frontend` (40s) both passed.
+
+## Step 5 Verification Log
+
+Verification for the React Flow canvas (`@xyflow/react`, `components/WorkflowCanvas.tsx`,
+`lib/workflow-graph.ts`, the dashboard/workspace/workflow pages, and `WorkspaceList`).
+
+1. **`npm run typecheck` / `npm run lint`** — clean throughout, including the React Flow
+   generics (`NodeMouseHandler<CanvasNode>`, `EdgeMouseHandler<CanvasEdge>`) — no `any` anywhere,
+   per CLAUDE.md.
+2. **`npm run test`** — 8/8 passed: the existing `Nav`/`AuthForm` tests plus 4 new tests for
+   `lib/workflow-graph.ts` (the pure backend-graph ⇄ React-Flow-graph conversion functions),
+   covering node/edge conversion, conditional-edge labeling, a full round-trip, and the
+   null-condition default — extracted specifically so this logic is unit-testable without
+   mounting the full canvas.
+3. **`npm run build`** — clean production build.
+4. **Real browser end-to-end run** (Playwright/Chromium, same local setup as prior steps): register
+   → create a workspace → create a workflow → open the canvas → add `input`/`condition`/`transform`
+   nodes → edit each node's JSON config via the side panel → drag-connect two edges → set an edge's
+   condition to `"true"` via the side panel → **Save** → hard-reload the page → confirm all 3 nodes
+   and 2 edges persisted → **Run** → confirm the execution panel shows all three nodes
+   `"succeeded"` with the condition node correctly evaluating `{"result":true}`.
+
+   Two real bugs were caught by this run and fixed (not by unit tests, which couldn't see them):
+   - **Hydration-race redirect bug**: the dashboard/workspace/canvas pages used the reactive
+     `useAuthToken()` hook (`useSyncExternalStore`) to decide whether to redirect to `/login`.
+     On a hard page reload, `useSyncExternalStore`'s server snapshot (`null`, since `localStorage`
+     doesn't exist server-side) can be observed by a `useEffect` before the client-corrected value
+     settles, bouncing an already-logged-in user to `/login` — reproducible on every hard reload,
+     invisible to any test that only navigates via client-side `<Link>`s. Fixed by reverting the
+     redirect-gating check to a plain `getToken()` call made directly inside the effect (which,
+     unlike a hook's return value, only ever runs post-hydration on the real client and can't
+     observe a server snapshot) — `useAuthToken()` remains correct for `Nav`'s reactive UI, which
+     doesn't drive navigation and is safe to flicker-correct.
+   - **Node-overlap layout bug**: `nextPosition()` spaced newly added nodes 160px apart while the
+     default node renders at roughly 300px wide, so every third node onward visually overlapped
+     its neighbor. Fixed by widening the grid to 360px/160px spacing (comment left in place noting
+     the ~300px default-node-width assumption, so a future custom node renderer knows to revisit it).
+5. Test-infra note: automating multi-edge drag-connect against `@xyflow/react`'s SVG edges hit
+   real Playwright precision limits (bounding-box-center clicks can land on a sibling node when
+   edges curve near one), not app bugs — confirmed by inspecting `data-id`/`aria-label` on the
+   edge elements directly. The verification script was scoped to a 2-edge scenario robust enough
+   to exercise every UI mechanic (multi-node chain, per-node config, edge conditions, save,
+   reload-persistence, run); the DAG executor's branching/skip semantics themselves are already
+   covered by the 8 unit tests and the live curl run in the Step 4 log.

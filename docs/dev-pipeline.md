@@ -207,3 +207,6 @@ no consumer yet; add one if/when refresh tokens or server-side revocation are ne
    - adding an unknown email — `400`
    - a third, unrelated user requesting the workspace by id — `404` (not merely 403, so workspace
      existence isn't leaked to non-members)
+5. **CI** — confirmed live: pushing this commit triggered run
+   [`30155716475`](https://github.com/Sane219/legoOS/actions/runs/30155716475), where `backend`
+   (52s, including the new migration) and `frontend` (37s) both passed.

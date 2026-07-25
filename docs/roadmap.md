@@ -6,10 +6,10 @@ file up to date — see [CLAUDE.md](../CLAUDE.md) rules.
 
 ## Phase 1: Foundation
 
-- [ ] Set up the Rust workspace (Cargo workspace with `api`, `executor`, `worker` crates)
+- [x] Set up the Rust workspace (Cargo workspace with `api`, `executor`, `worker` crates)
 - [x] Set up the Next.js frontend app with Tailwind CSS configured
-- [ ] Write the initial `docker-compose.yml` (Postgres, Redis, Qdrant, api, frontend)
-- [ ] Design and migrate the initial Postgres schema (users, workspaces, sessions)
+- [x] Write the initial `docker-compose.yml` (Postgres, Redis, Qdrant, api, frontend)
+- [x] Design and migrate the initial Postgres schema (users, workspaces, sessions)
 - [x] Implement user signup/login with password hashing and session/JWT auth
 - [x] Implement workspace creation and membership
 - [x] Build a basic authenticated frontend shell (login, dashboard layout, nav)
@@ -18,7 +18,7 @@ file up to date — see [CLAUDE.md](../CLAUDE.md) rules.
 - [x] Build a minimal React Flow canvas that can create and save a simple workflow
 - [x] Set up GitHub Actions CI: `cargo build`, `cargo test`, `cargo clippy -- -D warnings`
 - [x] Set up GitHub Actions CI: frontend lint, typecheck, and test
-- [ ] Write developer setup docs so a fresh clone can run `docker compose up` successfully
+- [x] Write developer setup docs so a fresh clone can run `docker compose up` successfully
 
 ## Phase 2: AI + Security Core
 

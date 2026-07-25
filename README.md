@@ -76,19 +76,42 @@ See [docs/architecture.md](docs/architecture.md) for the full breakdown.
 ```bash
 git clone https://github.com/Sane219/legoOS.git
 cd legoOS
-docker compose up
+make setup
 ```
+
+`make setup` creates local env files from their `.env.example` templates (only if they don't
+already exist — safe to re-run), builds and starts the whole stack in the background, and waits
+for the API to come up healthy. Once it's done:
+
+- Frontend: http://localhost:3000
+- API: http://localhost:8080
+
+Run `make logs` to follow logs, `make down` to stop everything.
 
 ### Environment variables
 
-Copy `.env.example` to `.env` and fill in the required values (database URL, Redis/NATS URL,
-Qdrant URL, LLM provider API keys). See [docs/dev-pipeline.md](docs/dev-pipeline.md) for the full
-local dev workflow.
+Two `.env.example` templates exist: `apps/api/.env.example` (database URL, JWT secret, log level)
+and `apps/web/.env.example` (the API URL the frontend calls). `make setup` copies both for you;
+to configure by hand, copy `apps/api/.env.example` to `apps/api/.env` and
+`apps/web/.env.example` to `apps/web/.env.local`. See [docs/dev-pipeline.md](docs/dev-pipeline.md)
+for the full local dev workflow.
 
 ## Project Status
 
 This is an actively developed **learning and portfolio project**, built in public, progressing in
 phased steps. See [docs/roadmap.md](docs/roadmap.md) for the full build plan and current progress.
+
+**Phase 1 (Foundation) is complete.** What's live today:
+
+- JWT auth (register/login), workspaces, and membership
+- A workflow data model (nodes/edges) and an in-process DAG executor (linear chains,
+  conditional branching, fan-in) — see the `executor` crate
+- A React Flow canvas to build, save, and run a workflow end to end
+- `docker compose` for the full stack, with CI covering both the Rust backend and the
+  Next.js frontend on every push
+
+Redis, Qdrant, and the `worker` crate are provisioned/scaffolded but not yet wired up — they
+land with Phase 2's async queue and RAG work.
 
 ## Documentation
 

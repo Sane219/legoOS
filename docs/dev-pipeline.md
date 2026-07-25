@@ -5,11 +5,16 @@ works before calling it done.
 
 ## Local Dev Workflow
 
-The whole stack — API, executor, workers, frontend, Postgres, Redis, Qdrant — runs via Docker
-Compose:
+The whole stack — Postgres, the `api` binary, and the `web` frontend — runs via Docker Compose.
+Redis and Qdrant are also provisioned in `docker-compose.yml` ahead of the code that will use them
+(Phase 2's queue, Phase 3's RAG search), but nothing reads or writes to them yet. On a fresh
+clone, `make setup` is the one-command path (see the root [README.md](../README.md#getting-started));
+it's equivalent to:
 
 ```bash
-docker compose up
+cp apps/api/.env.example apps/api/.env      # only if apps/api/.env doesn't already exist
+cp apps/web/.env.example apps/web/.env.local  # only if apps/web/.env.local doesn't already exist
+docker compose up --build
 ```
 
 This is the source of truth for "does this run." If a feature only works when run outside
@@ -19,17 +24,23 @@ For faster iteration on a single service, you can run that service natively agai
 the stack in Compose:
 
 ```bash
-docker compose up postgres redis qdrant   # infra only
-cargo run -p api                          # run the API natively, hot-reloadable
+docker compose up postgres   # infra only
+cd apps/api && cargo run     # run the API natively, hot-reloadable
 ```
 
 ```bash
-cd frontend
-npm run dev                               # run the frontend natively
+cd apps/web
+npm run dev                  # run the frontend natively
 ```
 
-Environment variables are read from `.env` (copy `.env.example` and fill in values: database URL,
-Redis/NATS URL, Qdrant URL, LLM provider API keys). Never commit a real `.env` file.
+Environment variables are split per app: `apps/api/.env` (`DATABASE_URL`, `JWT_SECRET`,
+`RUST_LOG`) and `apps/web/.env.local` (`NEXT_PUBLIC_API_URL`). Never commit either — both are
+gitignored, and only the `.env.example` templates are tracked.
+
+Other Makefile targets: `make dev` (foreground, rebuilds on every run), `make down` (stop the
+stack), `make logs` (follow container logs), `make test` (`cargo test --all`), `make lint`
+(`cargo fmt --check` + `cargo clippy`), `make migrate` (`sqlx migrate run` against
+`apps/api/.env`'s `DATABASE_URL`).
 
 ## Continuous Integration
 
@@ -303,3 +314,40 @@ Verification for the React Flow canvas (`@xyflow/react`, `components/WorkflowCan
    [`30157753436`](https://github.com/Sane219/legoOS/actions/runs/30157753436), where `backend`
    (51s) and `frontend` (43s, including the new `workflow-graph.test.ts` and the production build)
    both passed.
+
+## Phase 1 Completion Verification Log
+
+Closes out the four remaining Phase 1 checklist items: the `executor`/`worker` crates, Redis/Qdrant
+in `docker-compose.yml`, the `sessions` schema, and this onboarding pass (README, this doc, and
+`make setup`).
+
+1. **Extracted `apps/executor`** — moved `apps/api/src/dag.rs` (the pure DAG executor, unchanged
+   logic) into its own library crate; `apps/api` now depends on it as `executor = { path =
+   "../executor" }`. This isn't just checklist-filling: it's a real architectural improvement,
+   since Phase 2's `worker` processes will need to call the same executor logic without depending
+   on the whole `api` HTTP crate. All 8 of its unit tests moved with it and still pass in isolation
+   (`cargo test --lib -p executor`).
+2. **Added `apps/worker`** — a minimal binary crate that starts up, logs, and idles on
+   `tokio::signal::ctrl_c()`. Marked with a `ponytail:` comment: there's no queue for it to consume
+   from yet, so it deliberately does nothing beyond proving the workspace member exists — Phase 2
+   ("introduce the queue and move node execution from in-process to worker processes") is what
+   gives it a real job.
+3. **Added `sessions` table** (migration `0004_create_sessions`) — schema only, no application
+   code reads or writes it yet, since auth is stateless JWT with no server-side session lookup.
+   Documented in the migration file itself so it isn't mistaken for dead code later.
+4. **Added `redis` and `qdrant` services** to `docker-compose.yml` — provisioned ahead of the code
+   that will use them (Phase 2's queue, Phase 3's RAG search), not wired into any app yet.
+5. **`cargo build` / `cargo fmt -- --check` / `cargo clippy --all-targets --all -- -D warnings`**
+   — clean across all four crates (`api`, `executor`, `worker`, plus `web`).
+6. **`cargo test --all`** — 31/31 passed, including the executor's 8 unit tests now running from
+   their own crate.
+7. **Real gotcha hit and worth recording**: after adding the `sessions` migration and running
+   `sqlx migrate run` via the CLI, the next `cargo run --bin api` reported "Finished in 0.24s" (no
+   recompilation) and then failed at startup with `migration 4 was previously applied but is
+   missing in the resolved migrations` — `sqlx::migrate!()` embeds migrations at compile time, and
+   didn't detect the brand-new file as a reason to recompile. Fixed with `cargo clean -p api`
+   followed by a normal build. If you add a migration and the API can't find it, this is why.
+8. **Live curl smoke test** against the rebuilt binary — register, create a workspace, create a
+   workflow, save a 2-node graph, run it: `200` with `status: "succeeded"` and correct per-node
+   output — confirming the executor extraction didn't change behavior.
+9. Roadmap: all of Phase 1 is now checked off in [roadmap.md](roadmap.md).

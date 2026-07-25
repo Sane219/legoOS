@@ -15,6 +15,18 @@ services:
       timeout: 5s
       retries: 10
 
+  # Provisioned ahead of the code that uses them: the queue (Phase 2) and RAG vector
+  # search (Phase 3). Not yet wired into api/executor/worker.
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+
   api:
     build:
       context: .

@@ -9,7 +9,6 @@ use uuid::Uuid;
 
 use crate::{
     auth_extractor::AuthUser,
-    dag,
     error::AppError,
     models::{
         ExecutionNodeResponse, ExecutionResponse, WorkflowEdgeResponse, WorkflowGraphResponse,
@@ -270,28 +269,28 @@ pub async fn run_workflow(
     .await
     .map_err(|e| AppError::Internal(e.into()))?;
 
-    let dag_nodes: Vec<dag::Node> = node_rows
+    let dag_nodes: Vec<executor::Node> = node_rows
         .into_iter()
-        .map(|(id, node_type, config)| dag::Node {
+        .map(|(id, node_type, config)| executor::Node {
             id,
             node_type,
             config,
         })
         .collect();
-    let dag_edges: Vec<dag::Edge> = edge_rows
+    let dag_edges: Vec<executor::Edge> = edge_rows
         .into_iter()
-        .map(|(source, target, condition)| dag::Edge {
+        .map(|(source, target, condition)| executor::Edge {
             source,
             target,
             condition,
         })
         .collect();
 
-    let result = dag::execute(&dag_nodes, &dag_edges);
+    let result = executor::execute(&dag_nodes, &dag_edges);
 
     let status_str = match result.status {
-        dag::ExecutionStatus::Succeeded => "succeeded",
-        dag::ExecutionStatus::Failed => "failed",
+        executor::ExecutionStatus::Succeeded => "succeeded",
+        executor::ExecutionStatus::Failed => "failed",
     };
 
     let mut tx = state
@@ -316,9 +315,9 @@ pub async fn run_workflow(
     let mut node_responses = Vec::with_capacity(result.nodes.len());
     for node_result in &result.nodes {
         let node_status_str = match node_result.status {
-            dag::NodeStatus::Succeeded => "succeeded",
-            dag::NodeStatus::Failed => "failed",
-            dag::NodeStatus::Skipped => "skipped",
+            executor::NodeStatus::Succeeded => "succeeded",
+            executor::NodeStatus::Failed => "failed",
+            executor::NodeStatus::Skipped => "skipped",
         };
 
         sqlx::query(

@@ -7,7 +7,7 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use common::{
-    app, authed_json_request, authed_request, create_workspace, json_body, register,
+    add_member, app, authed_json_request, authed_request, create_workspace, json_body, register,
     run_execution_inline,
 };
 
@@ -424,4 +424,88 @@ async fn run_workflow_404_for_non_member(pool: PgPool) {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test]
+async fn create_workflow_forbidden_for_member(pool: PgPool) {
+    let app = app(pool).await;
+    let owner_token = register(app.clone(), "owner@example.com", "hunter22").await;
+    let member_token = register(app.clone(), "member@example.com", "hunter22").await;
+    let workspace_id = create_workspace(app.clone(), &owner_token, "Acme").await;
+    add_member(
+        app.clone(),
+        &owner_token,
+        &workspace_id,
+        "member@example.com",
+    )
+    .await;
+
+    let response = app
+        .oneshot(authed_json_request(
+            "POST",
+            &format!("/api/workspaces/{workspace_id}/workflows"),
+            &member_token,
+            json!({ "name": "Should not be allowed" }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[sqlx::test]
+async fn save_graph_forbidden_for_member(pool: PgPool) {
+    let app = app(pool).await;
+    let owner_token = register(app.clone(), "owner@example.com", "hunter22").await;
+    let member_token = register(app.clone(), "member@example.com", "hunter22").await;
+    let workspace_id = create_workspace(app.clone(), &owner_token, "Acme").await;
+    add_member(
+        app.clone(),
+        &owner_token,
+        &workspace_id,
+        "member@example.com",
+    )
+    .await;
+    let workflow_id = create_workflow_id(app.clone(), &owner_token, &workspace_id).await;
+
+    let response = app
+        .oneshot(authed_json_request(
+            "PUT",
+            &format!("/api/workspaces/{workspace_id}/workflows/{workflow_id}"),
+            &member_token,
+            json!({ "nodes": [], "edges": [] }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[sqlx::test]
+async fn run_workflow_allowed_for_member(pool: PgPool) {
+    let app = app(pool).await;
+    let owner_token = register(app.clone(), "owner@example.com", "hunter22").await;
+    let member_token = register(app.clone(), "member@example.com", "hunter22").await;
+    let workspace_id = create_workspace(app.clone(), &owner_token, "Acme").await;
+    add_member(
+        app.clone(),
+        &owner_token,
+        &workspace_id,
+        "member@example.com",
+    )
+    .await;
+    let workflow_id = create_workflow_id(app.clone(), &owner_token, &workspace_id).await;
+
+    let response = app
+        .oneshot(authed_request(
+            "POST",
+            &format!("/api/workspaces/{workspace_id}/workflows/{workflow_id}/executions"),
+            &member_token,
+        ))
+        .await
+        .unwrap();
+
+    // A member can run a workflow (an operational action) even though they can't
+    // create/edit one (a configuration action).
+    assert_eq!(response.status(), StatusCode::OK);
 }

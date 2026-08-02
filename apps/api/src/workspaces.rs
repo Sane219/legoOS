@@ -40,6 +40,30 @@ pub(crate) async fn member_role(
     Ok(row.map(|(role,)| role))
 }
 
+/// 404s if the caller isn't a member of the workspace at all (same as every other
+/// workspace-scoped check — don't reveal whether the workspace exists to a non-member),
+/// 403s if they're a member but not one of `allowed_roles`. Use this for configuration
+/// actions (creating/editing workflows, managing MCP connections); leave viewing and
+/// operational actions (running a workflow, approving a gate) open to any member.
+pub(crate) async fn require_role(
+    pool: &PgPool,
+    workspace_id: Uuid,
+    user_id: Uuid,
+    allowed_roles: &[&str],
+) -> Result<(), AppError> {
+    let role = member_role(pool, workspace_id, user_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("workspace not found".into()))?;
+
+    if allowed_roles.contains(&role.as_str()) {
+        Ok(())
+    } else {
+        Err(AppError::Forbidden(
+            "you don't have permission to do that in this workspace".into(),
+        ))
+    }
+}
+
 pub async fn create_workspace(
     State(state): State<AppState>,
     AuthUser(user_id): AuthUser,

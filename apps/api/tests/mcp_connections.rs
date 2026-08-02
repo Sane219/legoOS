@@ -5,7 +5,9 @@ use serde_json::json;
 use sqlx::PgPool;
 use tower::ServiceExt;
 
-use common::{app, authed_json_request, authed_request, create_workspace, json_body, register};
+use common::{
+    add_member, app, authed_json_request, authed_request, create_workspace, json_body, register,
+};
 
 #[sqlx::test]
 async fn create_list_and_delete_connection(pool: PgPool) {
@@ -133,4 +135,97 @@ async fn mcp_connections_404_for_non_member(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test]
+async fn create_connection_forbidden_for_member(pool: PgPool) {
+    let app = app(pool).await;
+    let owner_token = register(app.clone(), "owner@example.com", "hunter22").await;
+    let member_token = register(app.clone(), "member@example.com", "hunter22").await;
+    let workspace_id = create_workspace(app.clone(), &owner_token, "Acme").await;
+    add_member(
+        app.clone(),
+        &owner_token,
+        &workspace_id,
+        "member@example.com",
+    )
+    .await;
+
+    let response = app
+        .oneshot(authed_json_request(
+            "POST",
+            &format!("/api/workspaces/{workspace_id}/mcp-connections"),
+            &member_token,
+            json!({ "name": "weather", "url": "http://localhost:9999/mcp" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[sqlx::test]
+async fn delete_connection_forbidden_for_member(pool: PgPool) {
+    let app = app(pool).await;
+    let owner_token = register(app.clone(), "owner@example.com", "hunter22").await;
+    let member_token = register(app.clone(), "member@example.com", "hunter22").await;
+    let workspace_id = create_workspace(app.clone(), &owner_token, "Acme").await;
+    add_member(
+        app.clone(),
+        &owner_token,
+        &workspace_id,
+        "member@example.com",
+    )
+    .await;
+
+    let create_response = app
+        .clone()
+        .oneshot(authed_json_request(
+            "POST",
+            &format!("/api/workspaces/{workspace_id}/mcp-connections"),
+            &owner_token,
+            json!({ "name": "weather", "url": "http://localhost:9999/mcp" }),
+        ))
+        .await
+        .unwrap();
+    let connection_id = json_body(create_response).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let response = app
+        .oneshot(authed_request(
+            "DELETE",
+            &format!("/api/workspaces/{workspace_id}/mcp-connections/{connection_id}"),
+            &member_token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[sqlx::test]
+async fn list_connections_allowed_for_member(pool: PgPool) {
+    let app = app(pool).await;
+    let owner_token = register(app.clone(), "owner@example.com", "hunter22").await;
+    let member_token = register(app.clone(), "member@example.com", "hunter22").await;
+    let workspace_id = create_workspace(app.clone(), &owner_token, "Acme").await;
+    add_member(
+        app.clone(),
+        &owner_token,
+        &workspace_id,
+        "member@example.com",
+    )
+    .await;
+
+    // A member can view connections (a read action) even though they can't create/delete
+    // one (a configuration action).
+    let response = app
+        .oneshot(authed_request(
+            "GET",
+            &format!("/api/workspaces/{workspace_id}/mcp-connections"),
+            &member_token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 }

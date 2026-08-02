@@ -6,8 +6,11 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    auth_extractor::AuthUser, error::AppError, models::McpConnectionResponse, state::AppState,
-    workspaces::member_role,
+    auth_extractor::AuthUser,
+    error::AppError,
+    models::McpConnectionResponse,
+    state::AppState,
+    workspaces::{member_role, require_role},
 };
 
 #[derive(Debug, Deserialize)]
@@ -24,9 +27,7 @@ pub async fn create_connection(
     Path(workspace_id): Path<Uuid>,
     Json(body): Json<CreateMcpConnectionRequest>,
 ) -> Result<Json<McpConnectionResponse>, AppError> {
-    member_role(&state.pool, workspace_id, user_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("workspace not found".into()))?;
+    require_role(&state.pool, workspace_id, user_id, &["owner"]).await?;
 
     let name = body.name.trim();
     if name.is_empty() {
@@ -102,9 +103,7 @@ pub async fn delete_connection(
     AuthUser(user_id): AuthUser,
     Path((workspace_id, connection_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    member_role(&state.pool, workspace_id, user_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("workspace not found".into()))?;
+    require_role(&state.pool, workspace_id, user_id, &["owner"]).await?;
 
     let result = sqlx::query("DELETE FROM mcp_connections WHERE id = $1 AND workspace_id = $2")
         .bind(connection_id)

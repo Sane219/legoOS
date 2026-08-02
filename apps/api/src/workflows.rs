@@ -15,7 +15,7 @@ use crate::{
         WorkflowNodeResponse, WorkflowResponse, WorkflowRow,
     },
     state::AppState,
-    workspaces::member_role,
+    workspaces::{member_role, require_role},
 };
 
 #[derive(Debug, Deserialize)]
@@ -76,9 +76,7 @@ pub async fn create_workflow(
     Path(workspace_id): Path<Uuid>,
     Json(body): Json<CreateWorkflowRequest>,
 ) -> Result<Json<WorkflowResponse>, AppError> {
-    member_role(&state.pool, workspace_id, user_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("workspace not found".into()))?;
+    require_role(&state.pool, workspace_id, user_id, &["owner"]).await?;
 
     let name = body.name.trim();
     if name.is_empty() {
@@ -172,9 +170,7 @@ pub async fn save_graph(
     Path((workspace_id, workflow_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<SaveGraphRequest>,
 ) -> Result<Json<WorkflowGraphResponse>, AppError> {
-    member_role(&state.pool, workspace_id, user_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound("workspace not found".into()))?;
+    require_role(&state.pool, workspace_id, user_id, &["owner"]).await?;
     ensure_workflow_exists(&state.pool, workspace_id, workflow_id).await?;
 
     let mut tx = state

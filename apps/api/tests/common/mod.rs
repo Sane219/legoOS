@@ -122,3 +122,23 @@ pub async fn create_workspace(app: axum::Router, token: &str, name: &str) -> Str
         .unwrap()
         .to_string()
 }
+
+/// Adds the user with `member_email` (already registered) to `workspace_id` with the
+/// default 'member' role, as `owner_token`'s user (who must own the workspace).
+pub async fn add_member(
+    app: axum::Router,
+    owner_token: &str,
+    workspace_id: &str,
+    member_email: &str,
+) {
+    let response = app
+        .oneshot(authed_json_request(
+            "POST",
+            &format!("/api/workspaces/{workspace_id}/members"),
+            owner_token,
+            json!({ "email": member_email }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}

@@ -18,6 +18,11 @@ pub const VISIBILITY_TIMEOUT_MS: i64 = 60_000;
 /// Deliveries (original + reclaims) allowed before a job is routed to the dead-letter stream.
 pub const MAX_DELIVERIES: i64 = 5;
 
+/// Approximate cap (`MAXLEN ~`) applied to every `XADD` onto a workflow-run stream, so it
+/// can't grow unbounded — Redis trims lazily/approximately for this form, which is cheap
+/// and good enough since we only need "doesn't grow forever", not an exact cutoff.
+pub const STREAM_MAXLEN: usize = 10_000;
+
 /// Redis pub/sub channel prefix for per-node execution trace events.
 /// The full channel name is `{TRACE_CHANNEL_PREFIX}{execution_id}`.
 pub const TRACE_CHANNEL_PREFIX: &str = "execution-trace:";

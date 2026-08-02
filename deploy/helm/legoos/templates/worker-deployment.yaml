@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "legoos.componentName" (dict "root" $ "component" "worker") }}
+  labels:
+    {{- include "legoos.labels" (dict "root" $ "component" "worker") | nindent 4 }}
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "legoos.selectorLabels" (dict "root" $ "component" "worker") | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.worker.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "legoos.selectorLabels" (dict "root" $ "component" "worker") | nindent 8 }}
+    spec:
+      containers:
+        - name: worker
+          image: "{{ .Values.worker.image.repository }}:{{ .Values.worker.image.tag }}"
+          imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.worker.metricsPort }}
+          env:
+            - name: DATABASE_URL
+              value: "postgres://{{ .Values.postgres.auth.user }}:{{ .Values.postgres.auth.password }}@{{ include "legoos.postgresHost" . }}:{{ .Values.postgres.service.port }}/{{ .Values.postgres.auth.database }}"
+            - name: REDIS_URL
+              value: "redis://{{ include "legoos.redisHost" . }}:{{ .Values.redis.service.port }}"
+            - name: QDRANT_URL
+              value: "http://{{ include "legoos.qdrantHost" . }}:{{ .Values.qdrant.service.grpcPort }}"
+            - name: METRICS_PORT
+              value: {{ .Values.worker.metricsPort | quote }}
+            - name: RUST_LOG
+              value: {{ .Values.worker.env.rustLog | quote }}
+            - name: LLM_PROVIDER
+              value: {{ .Values.worker.env.llmProvider | quote }}
+            - name: EMBEDDING_PROVIDER
+              value: {{ .Values.worker.env.embeddingProvider | quote }}
+            - name: OLLAMA_BASE_URL
+              value: {{ .Values.worker.env.ollamaBaseUrl | quote }}
+            - name: MCP_CREDENTIAL_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "legoos.secretName" . }}
+                  key: MCP_CREDENTIAL_KEY
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "legoos.secretName" . }}
+                  key: ANTHROPIC_API_KEY
+            - name: VOYAGE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "legoos.secretName" . }}
+                  key: VOYAGE_API_KEY
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          {{- with .Values.worker.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "legoos.componentName" (dict "root" $ "component" "worker") }}
+  labels:
+    {{- include "legoos.labels" (dict "root" $ "component" "worker") | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "legoos.selectorLabels" (dict "root" $ "component" "worker") | nindent 4 }}
+  ports:
+    - name: metrics
+      port: {{ .Values.worker.metricsPort }}
+      targetPort: metrics

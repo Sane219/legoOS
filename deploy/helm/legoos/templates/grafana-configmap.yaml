@@ -1,0 +1,15 @@
+{{- if .Values.grafana.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "legoos.componentName" (dict "root" $ "component" "grafana") }}
+  labels:
+    {{- include "legoos.labels" (dict "root" $ "component" "grafana") | nindent 4 }}
+data:
+  datasource.yml: |
+{{ tpl (.Files.Get "files/grafana/provisioning/datasources/datasource.yml") . | indent 4 }}
+  dashboards.yml: |
+{{ .Files.Get "files/grafana/provisioning/dashboards/dashboards.yml" | indent 4 }}
+  legoos-overview.json: |
+{{ .Files.Get "files/grafana/dashboards/legoos-overview.json" | indent 4 }}
+{{- end }}

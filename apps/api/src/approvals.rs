@@ -80,6 +80,9 @@ async fn decide(
     let mut redis = state.redis.clone();
     redis::cmd("XADD")
         .arg(queue::WORKFLOW_RUNS_STREAM)
+        .arg("MAXLEN")
+        .arg("~")
+        .arg(queue::STREAM_MAXLEN)
         .arg("*")
         .arg(queue::JOB_FIELD)
         .arg(job_json)

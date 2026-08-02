@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "legoos.componentName" (dict "root" $ "component" "web") }}
+  labels:
+    {{- include "legoos.labels" (dict "root" $ "component" "web") | nindent 4 }}
+spec:
+  replicas: {{ .Values.web.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "legoos.selectorLabels" (dict "root" $ "component" "web") | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.web.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "legoos.selectorLabels" (dict "root" $ "component" "web") | nindent 8 }}
+    spec:
+      containers:
+        - name: web
+          # NEXT_PUBLIC_API_URL is inlined into the client bundle at image build time
+          # (see apps/web/Dockerfile ARG); it is NOT a runtime env var here.
+          image: "{{ .Values.web.image.repository }}:{{ .Values.web.image.tag }}"
+          imagePullPolicy: {{ .Values.web.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 3000
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          {{- with .Values.web.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "legoos.componentName" (dict "root" $ "component" "web") }}
+  labels:
+    {{- include "legoos.labels" (dict "root" $ "component" "web") | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "legoos.selectorLabels" (dict "root" $ "component" "web") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.web.service.port }}
+      targetPort: http

@@ -1,0 +1,35 @@
+legoOS ({{ .Chart.Name }}-{{ .Chart.Version }}) has been installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Workloads deployed:
+  - api      ({{ .Values.api.replicaCount }} replica(s), Service: {{ include "legoos.componentName" (dict "root" $ "component" "api") }}:{{ .Values.api.service.port }})
+  - worker   ({{ .Values.worker.replicaCount }} replica(s), safe to scale — coordinates via Redis consumer groups + Postgres FOR UPDATE SKIP LOCKED)
+  - web      ({{ .Values.web.replicaCount }} replica(s), Service: {{ include "legoos.componentName" (dict "root" $ "component" "web") }}:{{ .Values.web.service.port }})
+  - postgres, redis, qdrant (bundled StatefulSets with PVCs — see note below)
+{{- if .Values.prometheus.enabled }}
+  - prometheus (scraping api + worker at /metrics)
+{{- end }}
+{{- if .Values.grafana.enabled }}
+  - grafana    (Prometheus datasource + legoos-overview dashboard pre-provisioned)
+{{- end }}
+
+Access the app:
+{{- if .Values.ingress.enabled }}
+  Web: http://{{ .Values.ingress.web.host }}{{ .Values.ingress.web.path }}
+  API: http://{{ .Values.ingress.api.host }}{{ .Values.ingress.api.path }}
+{{- else }}
+  Ingress is disabled. Port-forward instead:
+    kubectl port-forward svc/{{ include "legoos.componentName" (dict "root" $ "component" "web") }} 3000:{{ .Values.web.service.port }}
+    kubectl port-forward svc/{{ include "legoos.componentName" (dict "root" $ "component" "api") }} 8080:{{ .Values.api.service.port }}
+{{- end }}
+{{- if .Values.grafana.enabled }}
+  Grafana:
+    kubectl port-forward svc/{{ include "legoos.componentName" (dict "root" $ "component" "grafana") }} 3001:{{ .Values.grafana.service.port }}
+{{- end }}
+
+IMPORTANT — this is a learning-project chart:
+  * postgres/redis/qdrant run as bundled, single-replica StatefulSets with PVCs for
+    self-containment. The production upgrade path is to swap these for managed services
+    (RDS/Cloud SQL, ElastiCache/Memorystore, Qdrant Cloud) and point global.postgresHost /
+    global.redisHost / global.qdrantHost at them instead.
+  * Rotate the default secrets before any real deployment — see values.yaml `secrets:` and
+    deploy/helm/README.md.

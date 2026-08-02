@@ -1,0 +1,174 @@
+# Default values for legoos.
+
+global:
+  # Set to override postgres/redis/qdrant hostnames if you swap the bundled
+  # StatefulSets below for managed services (RDS, ElastiCache, Qdrant Cloud).
+  postgresHost: ""
+  redisHost: ""
+  qdrantHost: ""
+
+api:
+  image:
+    repository: legoos/api
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    port: 8080
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  env:
+    rustLog: info
+  podAnnotations: {}
+
+worker:
+  image:
+    repository: legoos/worker
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  metricsPort: 9091
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  env:
+    rustLog: info
+    llmProvider: anthropic
+    embeddingProvider: ollama
+    ollamaBaseUrl: "http://ollama:11434"
+  podAnnotations: {}
+
+web:
+  image:
+    repository: legoos/web
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    port: 3000
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  podAnnotations: {}
+
+# Secret values. Prefer `existingSecret` (a Secret you create/manage outside this chart,
+# e.g. via sealed-secrets/external-secrets) over letting the chart create one from plaintext
+# values — the latter is convenient for local/dev installs only.
+secrets:
+  existingSecret: ""
+  # Keys expected on existingSecret (or created by the chart if existingSecret is unset):
+  #   JWT_SECRET, MCP_CREDENTIAL_KEY, ANTHROPIC_API_KEY, VOYAGE_API_KEY
+  jwtSecret: "dev-secret-change-me"
+  # 64 hex chars (32 bytes) — generate with: openssl rand -hex 32
+  mcpCredentialKey: "0000000000000000000000000000000000000000000000000000000000000000"
+  anthropicApiKey: ""
+  voyageApiKey: ""
+
+postgres:
+  image: postgres:16-alpine
+  auth:
+    user: legoos
+    password: legoos
+    database: legoos
+  service:
+    port: 5432
+  persistence:
+    size: 5Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+redis:
+  image: redis:7-alpine
+  service:
+    port: 6379
+  persistence:
+    size: 1Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+qdrant:
+  image: qdrant/qdrant:latest
+  service:
+    restPort: 6333
+    grpcPort: 6334
+  persistence:
+    size: 5Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+prometheus:
+  enabled: true
+  image: prom/prometheus:latest
+  service:
+    port: 9090
+  persistence:
+    size: 5Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+grafana:
+  enabled: true
+  image: grafana/grafana:latest
+  service:
+    port: 3000
+  anonymousAuth: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  api:
+    host: api.legoos.local
+    path: /
+  web:
+    host: legoos.local
+    path: /
+  tls: []
+  # - secretName: legoos-tls
+  #   hosts:
+  #     - legoos.local
+  #     - api.legoos.local

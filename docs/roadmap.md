@@ -53,9 +53,10 @@ file up to date — see [CLAUDE.md](../CLAUDE.md) rules.
 - [x] Instrument API, executor, and workers with Prometheus metrics
 - [x] Build Grafana dashboards for execution throughput, worker health, and queue depth
 - [x] Add structured logging and distributed tracing across API/executor/worker
-- [ ] Evaluate and migrate the queue from Redis to NATS for stronger delivery guarantees
-- [ ] Write Kubernetes manifests (or Helm chart) for all services
-- [ ] Write Terraform for provisioning the target Kubernetes cluster and cloud resources
+- [x] Evaluate and migrate the queue from Redis to NATS for stronger delivery guarantees
+      (evaluated — decided to stay on Redis Streams, see docs/adr-0001-queue-redis-vs-nats.md)
+- [x] Write Kubernetes manifests (or Helm chart) for all services
+- [x] Write Terraform for provisioning the target Kubernetes cluster and cloud resources
 - [ ] Set up a staging environment deployed via CI/CD
 - [ ] Load-test the executor/worker pipeline and document throughput limits
 

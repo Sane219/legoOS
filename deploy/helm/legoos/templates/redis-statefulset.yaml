@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "legoos.componentName" (dict "root" $ "component" "redis") }}
+  labels:
+    {{- include "legoos.labels" (dict "root" $ "component" "redis") | nindent 4 }}
+spec:
+  serviceName: {{ include "legoos.componentName" (dict "root" $ "component" "redis") }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "legoos.selectorLabels" (dict "root" $ "component" "redis") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "legoos.selectorLabels" (dict "root" $ "component" "redis") | nindent 8 }}
+    spec:
+      containers:
+        - name: redis
+          image: {{ .Values.redis.image }}
+          ports:
+            - containerPort: 6379
+              name: redis
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          {{- with .Values.redis.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.redis.persistence.storageClass }}
+        storageClassName: {{ .Values.redis.persistence.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.redis.persistence.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "legoos.componentName" (dict "root" $ "component" "redis") }}
+  labels:
+    {{- include "legoos.labels" (dict "root" $ "component" "redis") | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "legoos.selectorLabels" (dict "root" $ "component" "redis") | nindent 4 }}
+  ports:
+    - name: redis
+      port: {{ .Values.redis.service.port }}
+      targetPort: 6379

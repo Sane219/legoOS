@@ -1,0 +1,13 @@
+global:
+  scrape_interval: 10s
+
+scrape_configs:
+  - job_name: api
+    static_configs:
+      - targets: ["{{ include "legoos.componentName" (dict "root" $ "component" "api") }}:{{ .Values.api.service.port }}"]
+    metrics_path: /metrics
+
+  - job_name: worker
+    static_configs:
+      - targets: ["{{ include "legoos.componentName" (dict "root" $ "component" "worker") }}:{{ .Values.worker.metricsPort }}"]
+    metrics_path: /metrics

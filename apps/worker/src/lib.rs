@@ -190,7 +190,12 @@ pub async fn run_due_schedules(pool: &PgPool, redis: &mut ConnectionManager) -> 
     for job in jobs {
         let job_json = serde_json::to_string(&job).expect("RunJob always serializes");
         let _: redis::RedisResult<String> = redis
-            .xadd(WORKFLOW_RUNS_STREAM, "*", &[(JOB_FIELD, job_json)])
+            .xadd_maxlen(
+                WORKFLOW_RUNS_STREAM,
+                redis::streams::StreamMaxlen::Approx(queue::STREAM_MAXLEN),
+                "*",
+                &[(JOB_FIELD, job_json)],
+            )
             .await;
     }
 
@@ -203,8 +208,9 @@ async fn dead_letter(conn: &mut ConnectionManager, entry_id: &str) -> anyhow::Re
         "job exceeded max deliveries, moving to dead-letter stream"
     );
     let _: String = conn
-        .xadd(
+        .xadd_maxlen(
             WORKFLOW_RUNS_DEAD_LETTER_STREAM,
+            redis::streams::StreamMaxlen::Approx(queue::STREAM_MAXLEN),
             "*",
             &[("original_id", entry_id)],
         )

@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "legoos.componentName" (dict "root" $ "component" "api") }}
+  labels:
+    {{- include "legoos.labels" (dict "root" $ "component" "api") | nindent 4 }}
+spec:
+  replicas: {{ .Values.api.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "legoos.selectorLabels" (dict "root" $ "component" "api") | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.api.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "legoos.selectorLabels" (dict "root" $ "component" "api") | nindent 8 }}
+    spec:
+      containers:
+        - name: api
+          image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag }}"
+          imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: DATABASE_URL
+              value: "postgres://{{ .Values.postgres.auth.user }}:{{ .Values.postgres.auth.password }}@{{ include "legoos.postgresHost" . }}:{{ .Values.postgres.service.port }}/{{ .Values.postgres.auth.database }}"
+            - name: REDIS_URL
+              value: "redis://{{ include "legoos.redisHost" . }}:{{ .Values.redis.service.port }}"
+            - name: QDRANT_URL
+              value: "http://{{ include "legoos.qdrantHost" . }}:{{ .Values.qdrant.service.grpcPort }}"
+            - name: RUST_LOG
+              value: {{ .Values.api.env.rustLog | quote }}
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "legoos.secretName" . }}
+                  key: JWT_SECRET
+            - name: MCP_CREDENTIAL_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "legoos.secretName" . }}
+                  key: MCP_CREDENTIAL_KEY
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          {{- with .Values.api.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "legoos.componentName" (dict "root" $ "component" "api") }}
+  labels:
+    {{- include "legoos.labels" (dict "root" $ "component" "api") | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "legoos.selectorLabels" (dict "root" $ "component" "api") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.api.service.port }}
+      targetPort: http

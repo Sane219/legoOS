@@ -1,0 +1,6 @@
+apiVersion: v2
+name: legoos
+description: Helm chart for legoOS — AI workflow automation platform (api, worker, web, postgres, redis, qdrant, prometheus, grafana)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

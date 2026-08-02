@@ -1,0 +1,35 @@
+# Copy to terraform.tfvars and fill in real values, or pass equivalent
+# TF_VAR_* environment variables instead (recommended for rds_password).
+# terraform.tfvars is gitignored-by-convention for secrets — do not commit
+# a copy containing real credentials.
+
+project     = "legoos"
+environment = "staging"
+aws_region  = "us-east-1"
+
+vpc_cidr = "10.42.0.0/16"
+azs      = ["us-east-1a", "us-east-1b", "us-east-1c"]
+
+eks_cluster_version    = "1.30"
+eks_node_instance_type = "t3.medium"
+eks_node_desired_size  = 2
+eks_node_min_size      = 2
+eks_node_max_size      = 3
+
+rds_instance_class      = "db.t4g.micro"
+rds_engine_version      = "16.4"
+rds_allocated_storage_gb = 20
+rds_database_name       = "legoos"
+rds_username            = "legoos"
+# rds_password          — do NOT put a real password here; set via
+#                          TF_VAR_rds_password or a secrets manager instead.
+
+redis_node_type      = "cache.t4g.micro"
+redis_engine_version = "7.1"
+
+ecr_repositories = ["api", "worker", "web"]
+
+tags = {
+  Project   = "legoos"
+  ManagedBy = "terraform"
+}

@@ -57,7 +57,9 @@ file up to date — see [CLAUDE.md](../CLAUDE.md) rules.
       (evaluated — decided to stay on Redis Streams, see docs/adr-0001-queue-redis-vs-nats.md)
 - [x] Write Kubernetes manifests (or Helm chart) for all services
 - [x] Write Terraform for provisioning the target Kubernetes cluster and cloud resources
-- [ ] Set up a staging environment deployed via CI/CD
+- [x] Set up a staging environment deployed via CI/CD
+      (pipeline built — .github/workflows/deploy-staging.yml builds/pushes images always;
+      the helm-deploy step activates once a real cluster + STAGING_KUBECONFIG secret exist)
 - [ ] Load-test the executor/worker pipeline and document throughput limits
 
 ## Phase 5: Product Polish

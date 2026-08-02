@@ -1,0 +1,43 @@
+# Staging overrides, layered on top of values.yaml (`-f values.yaml -f values-staging.yaml`,
+# or as done in .github/workflows/deploy-staging.yml, `-f values-staging.yaml` plus
+# `--set *.image.tag=<sha>` for the tag CI just pushed).
+#
+# This file assumes a cluster and image registry already exist (see deploy/terraform and
+# deploy/helm/README.md) — it is not itself a way to provision staging, just how CI/CD
+# points the chart at it once it does.
+
+api:
+  image:
+    repository: ghcr.io/sane219/legoos-api
+  replicaCount: 1
+
+worker:
+  image:
+    repository: ghcr.io/sane219/legoos-worker
+  replicaCount: 1
+  env:
+    llmProvider: anthropic
+    embeddingProvider: ollama
+
+web:
+  image:
+    repository: ghcr.io/sane219/legoos-web
+  replicaCount: 1
+
+# Staging points at managed Postgres/Redis (see deploy/terraform outputs for the real
+# endpoints) instead of the bundled StatefulSets — set these once the cluster exists.
+global:
+  postgresHost: ""
+  redisHost: ""
+  qdrantHost: ""
+
+ingress:
+  enabled: true
+  className: nginx
+  api:
+    host: api.staging.legoos.example
+  web:
+    host: staging.legoos.example
+
+secrets:
+  existingSecret: legoos-staging-secrets

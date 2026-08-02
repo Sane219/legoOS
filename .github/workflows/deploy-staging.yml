@@ -1,0 +1,89 @@
+name: Deploy staging
+
+# Runs after CI is green on main, or manually. Building + pushing images always runs (it only
+# needs the repo's own GITHUB_TOKEN, for GHCR). The actual `helm upgrade` step is gated behind
+# a `STAGING_KUBECONFIG` repo secret — until that's configured, this workflow builds and
+# publishes images but does not attempt to deploy anywhere. See deploy/terraform + deploy/helm
+# for what would need to exist first (a real cluster) before that secret means anything.
+on:
+  workflow_run:
+    workflows: [CI]
+    branches: [main]
+    types: [completed]
+  workflow_dispatch: {}
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_BASE: ghcr.io/${{ github.repository_owner }}/legoos
+
+jobs:
+  build-and-push:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        service: [api, worker, web]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.service }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/${{ matrix.service }}/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_BASE }}-${{ matrix.service }}:${{ github.sha }}
+            ${{ env.IMAGE_BASE }}-${{ matrix.service }}:staging-latest
+
+  deploy:
+    needs: build-and-push
+    if: ${{ needs.build-and-push.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check staging cluster access is configured
+        id: gate
+        run: |
+          if [ -z "${{ secrets.STAGING_KUBECONFIG }}" ]; then
+            echo "STAGING_KUBECONFIG is not set — images were built and pushed, but there is no"
+            echo "staging cluster wired up yet. See deploy/terraform (provision a cluster) and"
+            echo "deploy/helm/README.md (install the chart), then add a STAGING_KUBECONFIG repo"
+            echo "secret to let this job deploy automatically."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up kubeconfig
+        if: steps.gate.outputs.ready == 'true'
+        run: |
+          mkdir -p "$HOME/.kube"
+          echo "${{ secrets.STAGING_KUBECONFIG }}" | base64 -d > "$HOME/.kube/config"
+
+      - name: Install Helm
+        if: steps.gate.outputs.ready == 'true'
+        uses: azure/setup-helm@v4
+
+      - name: helm upgrade --install
+        if: steps.gate.outputs.ready == 'true'
+        run: |
+          helm upgrade --install legoos-staging deploy/helm/legoos \
+            --namespace legoos-staging --create-namespace \
+            -f deploy/helm/legoos/values-staging.yaml \
+            --set api.image.tag=${{ github.sha }} \
+            --set worker.image.tag=${{ github.sha }} \
+            --set web.image.tag=${{ github.sha }} \
+            --wait --timeout 5m

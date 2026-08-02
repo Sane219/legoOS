@@ -1,0 +1,76 @@
+name: Load test
+
+# Manual only — this is a benchmark, not a correctness check, and shouldn't run on every push.
+# Results land in the job summary. Runs on a shared GitHub Actions runner (2 vCPU as of
+# writing), not production hardware — treat throughput numbers as a floor for what this
+# pipeline can do, not a ceiling; rerun against real infra before using them for capacity
+# planning. See apps/worker/tests/load_test.rs for what's actually measured (a 5-node
+# input->transform chain, no LLM calls, so this isolates queue+executor+DB overhead from
+# any external API latency).
+on:
+  workflow_dispatch: {}
+
+env:
+  DATABASE_URL: postgres://legoos:legoos@localhost:5432/legoos
+  JWT_SECRET: ci-test-secret
+  REDIS_URL: redis://localhost:6379
+  QDRANT_URL: http://localhost:6334
+  MCP_CREDENTIAL_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+
+jobs:
+  load-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: legoos
+          POSTGRES_PASSWORD: legoos
+          POSTGRES_DB: legoos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U legoos -d legoos"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install sqlx-cli
+        run: cargo install sqlx-cli --no-default-features --features postgres,rustls --locked
+
+      - name: Run migrations
+        run: cd apps/api && sqlx migrate run
+
+      - name: Run load test (release build)
+        run: |
+          cargo test -p worker --test load_test --release -- --ignored --nocapture \
+            | tee load-test-output.txt
+
+      - name: Summarize
+        if: always()
+        run: |
+          echo '### Load test result' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep "^load test:" load-test-output.txt >> "$GITHUB_STEP_SUMMARY" || echo "no result line found" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "Runner: GitHub Actions ubuntu-latest (shared, not production hardware)." >> "$GITHUB_STEP_SUMMARY"

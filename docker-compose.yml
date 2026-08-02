@@ -74,7 +74,10 @@ services:
       EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-ollama}
       VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      METRICS_PORT: "9091"
       RUST_LOG: info
+    ports:
+      - "9091:9091"
     depends_on:
       postgres:
         condition: service_healthy
@@ -95,6 +98,29 @@ services:
       - "3000:3000"
     depends_on:
       - api
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - api
+      - worker
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
 
 volumes:
   postgres_data:

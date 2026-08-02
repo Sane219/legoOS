@@ -5,11 +5,14 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.104"
+axum = { version = "0.8.9", features = ["ws"] }
 chrono = { version = "0.4.45", features = ["serde"] }
 dotenvy = "0.15.7"
 executor = { version = "0.1.0", path = "../executor" }
 llm = { version = "0.1.0", path = "../llm" }
 mcp = { version = "0.1.0", path = "../mcp" }
+metrics = "0.24.6"
+metrics-exporter-prometheus = "0.18.3"
 queue = { version = "0.1.0", path = "../queue" }
 rag = { version = "0.1.0", path = "../rag" }
 redis = { version = "1.5.0", features = ["tokio-comp", "streams", "connection-manager"] }

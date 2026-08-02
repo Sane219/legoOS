@@ -16,6 +16,8 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
 
+    api::metrics::install();
+
     let database_url = std::env::var("DATABASE_URL").context("DATABASE_URL must be set")?;
     let jwt_secret = std::env::var("JWT_SECRET").context("JWT_SECRET must be set")?;
     let redis_url =

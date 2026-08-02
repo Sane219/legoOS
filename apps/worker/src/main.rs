@@ -15,6 +15,32 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
 
+    let metrics_handle = metrics_exporter_prometheus::PrometheusBuilder::new()
+        .install_recorder()
+        .context("failed to install Prometheus recorder")?;
+    let metrics_port: u16 = std::env::var("METRICS_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(9091);
+    tokio::spawn(async move {
+        let app = axum::Router::new().route(
+            "/metrics",
+            axum::routing::get(move || {
+                let handle = metrics_handle.clone();
+                async move { handle.render() }
+            }),
+        );
+        let addr = format!("0.0.0.0:{metrics_port}");
+        match tokio::net::TcpListener::bind(&addr).await {
+            Ok(listener) => {
+                if let Err(e) = axum::serve(listener, app).await {
+                    tracing::error!(error = %e, "metrics server stopped");
+                }
+            }
+            Err(e) => tracing::error!(error = %e, addr = %addr, "failed to bind metrics server"),
+        }
+    });
+
     let database_url = std::env::var("DATABASE_URL").context("DATABASE_URL must be set")?;
     let redis_url =
         std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
@@ -109,6 +135,11 @@ async fn tick(
     if let Err(e) = run_due_schedules(pool, redis).await {
         tracing::warn!(error = %e, "schedule tick failed");
     }
+
+    let queue_depth: i64 = redis::AsyncCommands::xlen(redis, queue::WORKFLOW_RUNS_STREAM)
+        .await
+        .unwrap_or(0);
+    metrics::gauge!("worker_queue_depth").set(queue_depth as f64);
 
     match read_new(redis, consumer, 2000).await {
         Ok(entries) => {

@@ -244,7 +244,22 @@ pub async fn execute(
             continue;
         }
 
-        match run_node(node, &inputs, provider, rag).await {
+        let node_started_at = std::time::Instant::now();
+        let node_outcome = run_node(node, &inputs, provider, rag).await;
+        metrics::histogram!(
+            "executor_node_duration_seconds",
+            "node_type" => node.node_type.clone(),
+            "status" => if node_outcome.is_ok() { "succeeded" } else { "failed" },
+        )
+        .record(node_started_at.elapsed().as_secs_f64());
+        metrics::counter!(
+            "executor_node_total",
+            "node_type" => node.node_type.clone(),
+            "status" => if node_outcome.is_ok() { "succeeded" } else { "failed" },
+        )
+        .increment(1);
+
+        match node_outcome {
             Ok(output) => {
                 propagate(
                     node_id,

@@ -85,6 +85,9 @@ for the API to come up healthy. Once it's done:
 
 - Frontend: http://localhost:3000
 - API: http://localhost:8080
+- Prometheus: http://localhost:9090
+- Grafana: http://localhost:3001 (anonymous viewer access, pre-provisioned "legoOS overview"
+  dashboard — request rate/latency, worker job throughput, queue depth, node execution rate)
 
 Run `make logs` to follow logs, `make down` to stop everything.
 
@@ -136,7 +139,31 @@ phased steps. See [docs/roadmap.md](docs/roadmap.md) for the full build plan and
   delete) requires the `owner` role; viewing, running, and approving stay open to any
   member.
 
-Qdrant is provisioned but not yet wired up — that lands with Phase 3's RAG work.
+**Phase 3 (Knowledge + Intelligence) is complete.** What's live:
+
+- Document upload/storage per workspace, chunked and embedded into Qdrant (`rag` crate) via
+  an Ollama or Voyage embedding provider, selected via `EMBEDDING_PROVIDER`
+- A `rag` node type: retrieves the chunks most similar to a rendered query and injects them
+  into an agent's context
+- Long-term memory: `memory_write`/`memory_read` node types persist and recall per-agent,
+  per-workspace facts across runs, also backed by Qdrant
+- Workflow scheduling: cron-style triggers (`workflow_schedules`) fire on a worker tick using
+  `FOR UPDATE SKIP LOCKED` so multiple worker replicas split due schedules instead of
+  double-firing; a dedicated UI page creates/pauses/deletes them
+- Cost tracking: `agent` nodes report real input/output token usage from the provider
+  response and an estimated USD cost (hardcoded per-model pricing, `null` for unmodeled
+  models — never a fabricated number)
+- An `evaluate` node type: scores upstream text either by rule (contains/regex/min-length)
+  or an LLM-judge prompt, producing a `score`/`passed`/`rationale`
+- An analytics dashboard per workflow: per-execution cost, token counts, and average eval
+  score, aggregated straight from execution node output — no extra tables needed
+
+**Phase 4 (Infra Maturity) is in progress.** Prometheus metrics are live on both the API
+(`/metrics`, HTTP request rate/latency) and the worker (`/metrics` on `METRICS_PORT`, job
+throughput/duration and queue depth), plus executor-level node execution metrics recorded
+into whichever process runs them. Grafana ships pre-provisioned with a starter dashboard.
+`docker compose` wires these up locally; see `observability/` for the Prometheus scrape
+config and Grafana dashboard JSON.
 
 ## Documentation
 

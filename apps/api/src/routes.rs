@@ -4,13 +4,14 @@ use axum::{
 };
 
 use crate::{
-    analytics, approvals, documents, handlers, mcp_connections, schedules, state::AppState, trace,
-    workflows, workspaces,
+    analytics, approvals, documents, handlers, mcp_connections, metrics, schedules,
+    state::AppState, trace, workflows, workspaces,
 };
 
 pub fn build(state: AppState) -> Router {
     Router::new()
         .route("/health", get(handlers::health))
+        .route("/metrics", get(metrics::render))
         .route("/api/auth/register", post(handlers::register))
         .route("/api/auth/login", post(handlers::login))
         .route("/api/auth/me", get(handlers::me))
@@ -88,5 +89,6 @@ pub fn build(state: AppState) -> Router {
             "/api/workspaces/{workspace_id}/workflows/{workflow_id}/analytics",
             get(analytics::workflow_analytics),
         )
+        .layer(axum::middleware::from_fn(metrics::track_http_metrics))
         .with_state(state)
 }

@@ -27,6 +27,8 @@ url = "2.5.8"
 mcp = { version = "0.1.0", path = "../mcp" }
 rag = { version = "0.1.0", path = "../rag" }
 llm = { version = "0.1.0", path = "../llm" }
+metrics = "0.24.6"
+metrics-exporter-prometheus = "0.18.3"
 
 [dev-dependencies]
 async-trait = "0.1.91"

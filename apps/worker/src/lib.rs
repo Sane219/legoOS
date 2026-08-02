@@ -219,6 +219,16 @@ async fn dead_letter(conn: &mut ConnectionManager, entry_id: &str) -> anyhow::Re
 /// that fails at the node level is a normal, fully-recorded execution, not a reason to
 /// retry. Only an infrastructure error (DB/redis) surfaces here for the caller to log.
 #[allow(clippy::too_many_arguments)]
+// The span carries execution_id/workflow_id onto every log emitted while this job runs —
+// including from inside run_job/executor — so a log aggregator can filter one run's whole
+// story by execution_id without each callee threading it through manually. This is the
+// "distributed tracing" scope actually delivered: correlation via structured log fields,
+// not span export to a collector like Jaeger (documented as a future upgrade, not faked).
+#[tracing::instrument(
+    name = "job",
+    skip(pool, redis, entry_id, provider, mcp_credential_key, rag_client, embedding_provider),
+    fields(execution_id = %job.execution_id, workflow_id = %job.workflow_id)
+)]
 pub async fn process_entry(
     pool: &PgPool,
     redis: &mut ConnectionManager,
@@ -229,8 +239,9 @@ pub async fn process_entry(
     rag_client: Option<&rag::RagClient>,
     embedding_provider: Option<&Arc<dyn llm::EmbeddingProvider>>,
 ) {
-    tracing::info!(execution_id = %job.execution_id, "processing workflow run");
-    if let Err(e) = run_job(
+    tracing::info!("processing workflow run");
+    let started_at = std::time::Instant::now();
+    let outcome = run_job(
         pool,
         redis,
         &job,
@@ -239,9 +250,19 @@ pub async fn process_entry(
         rag_client,
         embedding_provider,
     )
-    .await
-    {
-        tracing::error!(execution_id = %job.execution_id, error = %e, "workflow run failed");
+    .await;
+
+    let status = if outcome.is_ok() {
+        "succeeded"
+    } else {
+        "failed"
+    };
+    metrics::histogram!("worker_job_duration_seconds", "status" => status)
+        .record(started_at.elapsed().as_secs_f64());
+    metrics::counter!("worker_jobs_total", "status" => status).increment(1);
+
+    if let Err(e) = outcome {
+        tracing::error!(error = %e, "workflow run failed");
     }
     let _: redis::RedisResult<()> = redis
         .xack(WORKFLOW_RUNS_STREAM, WORKFLOW_RUNS_GROUP, &[entry_id])

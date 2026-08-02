@@ -6,6 +6,7 @@ pub mod error;
 pub mod handlers;
 pub mod jwt;
 pub mod mcp_connections;
+pub mod metrics;
 pub mod models;
 pub mod routes;
 pub mod schedules;

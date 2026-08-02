@@ -50,9 +50,9 @@ file up to date — see [CLAUDE.md](../CLAUDE.md) rules.
 
 ## Phase 4: Infra Maturity
 
-- [ ] Instrument API, executor, and workers with Prometheus metrics
-- [ ] Build Grafana dashboards for execution throughput, worker health, and queue depth
-- [ ] Add structured logging and distributed tracing across API/executor/worker
+- [x] Instrument API, executor, and workers with Prometheus metrics
+- [x] Build Grafana dashboards for execution throughput, worker health, and queue depth
+- [x] Add structured logging and distributed tracing across API/executor/worker
 - [ ] Evaluate and migrate the queue from Redis to NATS for stronger delivery guarantees
 - [ ] Write Kubernetes manifests (or Helm chart) for all services
 - [ ] Write Terraform for provisioning the target Kubernetes cluster and cloud resources

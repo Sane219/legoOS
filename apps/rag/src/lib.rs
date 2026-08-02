@@ -55,16 +55,7 @@ impl RagClient {
     /// Creates the shared collection if it doesn't already exist. Safe to call on every
     /// startup/ingest — a fresh deployment's first document call provisions it.
     pub async fn ensure_collection(&self, vector_size: u64) -> Result<(), RagError> {
-        if self.client.collection_exists(COLLECTION).await? {
-            return Ok(());
-        }
-        self.client
-            .create_collection(
-                CreateCollectionBuilder::new(COLLECTION)
-                    .vectors_config(VectorParamsBuilder::new(vector_size, Distance::Cosine)),
-            )
-            .await?;
-        Ok(())
+        create_collection_if_missing(&self.client, COLLECTION, vector_size).await
     }
 
     pub async fn upsert_chunks(&self, chunks: Vec<ChunkPoint>) -> Result<(), RagError> {
@@ -149,6 +140,32 @@ impl RagClient {
     }
 }
 
+/// Creates `name` with the given vector size unless it's already there — tolerating a
+/// concurrent caller winning the race between the existence check and creation (two
+/// ingests/writes hitting an empty Qdrant at the same moment both see "missing" and both
+/// try to create it; only one creation call actually succeeds, the loser gets
+/// `AlreadyExists`, which is just as good an outcome as if it had seen "already there").
+async fn create_collection_if_missing(
+    client: &Qdrant,
+    name: &str,
+    vector_size: u64,
+) -> Result<(), RagError> {
+    if client.collection_exists(name).await? {
+        return Ok(());
+    }
+    match client
+        .create_collection(
+            CreateCollectionBuilder::new(name)
+                .vectors_config(VectorParamsBuilder::new(vector_size, Distance::Cosine)),
+        )
+        .await
+    {
+        Ok(_) => Ok(()),
+        Err(e) if e.to_string().contains("already exists") => Ok(()),
+        Err(e) => Err(e.into()),
+    }
+}
+
 /// Long-term agent memory lives in its own collection, keyed by `workspace_id` +
 /// `agent_key` (an arbitrary caller-chosen identifier — e.g. a node id, or a name shared
 /// across nodes/workflows that should draw on the same memory) rather than `document_id`.
@@ -173,16 +190,7 @@ pub struct MemoryHit {
 
 impl RagClient {
     pub async fn ensure_memories_collection(&self, vector_size: u64) -> Result<(), RagError> {
-        if self.client.collection_exists(MEMORIES_COLLECTION).await? {
-            return Ok(());
-        }
-        self.client
-            .create_collection(
-                CreateCollectionBuilder::new(MEMORIES_COLLECTION)
-                    .vectors_config(VectorParamsBuilder::new(vector_size, Distance::Cosine)),
-            )
-            .await?;
-        Ok(())
+        create_collection_if_missing(&self.client, MEMORIES_COLLECTION, vector_size).await
     }
 
     /// Persists one fact/result for `agent_key` in `workspace_id`.

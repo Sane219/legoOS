@@ -32,7 +32,7 @@ async fn main() -> anyhow::Result<()> {
         .context("failed to run migrations")?;
 
     let redis_client = redis::Client::open(redis_url.as_str()).context("invalid REDIS_URL")?;
-    let redis = ConnectionManager::new(redis_client)
+    let redis = ConnectionManager::new(redis_client.clone())
         .await
         .context("failed to connect to redis")?;
 
@@ -40,6 +40,7 @@ async fn main() -> anyhow::Result<()> {
         pool,
         jwt_secret,
         redis,
+        redis_client,
     };
     let app = routes::build(state)
         .layer(

@@ -49,7 +49,7 @@ pub struct SaveGraphRequest {
     pub edges: Vec<SaveEdgeRequest>,
 }
 
-async fn ensure_workflow_exists(
+pub(crate) async fn ensure_workflow_exists(
     pool: &sqlx::PgPool,
     workspace_id: Uuid,
     workflow_id: Uuid,

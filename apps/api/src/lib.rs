@@ -5,5 +5,6 @@ pub mod jwt;
 pub mod models;
 pub mod routes;
 pub mod state;
+pub mod trace;
 pub mod workflows;
 pub mod workspaces;

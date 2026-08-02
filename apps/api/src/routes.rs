@@ -3,7 +3,7 @@ use axum::{
     routing::{get, post},
 };
 
-use crate::{handlers, state::AppState, workflows, workspaces};
+use crate::{handlers, state::AppState, trace, workflows, workspaces};
 
 pub fn build(state: AppState) -> Router {
     Router::new()
@@ -35,6 +35,10 @@ pub fn build(state: AppState) -> Router {
         .route(
             "/api/workspaces/{workspace_id}/workflows/{workflow_id}/executions/{execution_id}",
             get(workflows::get_execution),
+        )
+        .route(
+            "/api/workspaces/{workspace_id}/workflows/{workflow_id}/executions/{execution_id}/trace",
+            get(trace::execution_trace),
         )
         .with_state(state)
 }

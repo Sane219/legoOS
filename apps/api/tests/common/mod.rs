@@ -16,11 +16,14 @@ use uuid::Uuid;
 
 pub const JWT_SECRET: &str = "test-secret";
 
-pub async fn redis_conn() -> ConnectionManager {
+pub fn redis_client() -> redis::Client {
     let redis_url =
         std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
-    let client = redis::Client::open(redis_url.as_str()).expect("invalid REDIS_URL");
-    ConnectionManager::new(client)
+    redis::Client::open(redis_url.as_str()).expect("invalid REDIS_URL")
+}
+
+pub async fn redis_conn() -> ConnectionManager {
+    ConnectionManager::new(redis_client())
         .await
         .expect("failed to connect to redis for tests")
 }
@@ -32,6 +35,7 @@ pub async fn app(pool: PgPool) -> axum::Router {
         pool,
         jwt_secret: JWT_SECRET.to_string(),
         redis,
+        redis_client: redis_client(),
     })
 }
 

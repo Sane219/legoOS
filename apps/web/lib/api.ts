@@ -98,6 +98,16 @@ export interface Document {
   created_at: string;
 }
 
+export interface WorkflowSchedule {
+  id: string;
+  workflow_id: string;
+  cron_expression: string;
+  enabled: boolean;
+  next_run_at: string;
+  last_run_at: string | null;
+  created_at: string;
+}
+
 export interface ApprovalGate {
   id: string;
   execution_id: string;
@@ -308,6 +318,57 @@ export function deleteDocument(
 ): Promise<{ deleted: true }> {
   return authedRequest(
     `/api/workspaces/${workspaceId}/documents/${documentId}`,
+    token,
+    { method: "DELETE" },
+  );
+}
+
+export function listSchedules(
+  token: string,
+  workspaceId: string,
+  workflowId: string,
+): Promise<WorkflowSchedule[]> {
+  return authedRequest(
+    `/api/workspaces/${workspaceId}/workflows/${workflowId}/schedules`,
+    token,
+  );
+}
+
+export function createSchedule(
+  token: string,
+  workspaceId: string,
+  workflowId: string,
+  schedule: { cron_expression: string; enabled?: boolean },
+): Promise<WorkflowSchedule> {
+  return authedRequest(
+    `/api/workspaces/${workspaceId}/workflows/${workflowId}/schedules`,
+    token,
+    { method: "POST", body: JSON.stringify(schedule) },
+  );
+}
+
+export function updateSchedule(
+  token: string,
+  workspaceId: string,
+  workflowId: string,
+  scheduleId: string,
+  update: { enabled: boolean },
+): Promise<WorkflowSchedule> {
+  return authedRequest(
+    `/api/workspaces/${workspaceId}/workflows/${workflowId}/schedules/${scheduleId}`,
+    token,
+    { method: "PATCH", body: JSON.stringify(update) },
+  );
+}
+
+export function deleteSchedule(
+  token: string,
+  workspaceId: string,
+  workflowId: string,
+  scheduleId: string,
+): Promise<{ deleted: true }> {
+  return authedRequest(
+    `/api/workspaces/${workspaceId}/workflows/${workflowId}/schedules/${scheduleId}`,
     token,
     { method: "DELETE" },
   );

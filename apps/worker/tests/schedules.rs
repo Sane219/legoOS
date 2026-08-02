@@ -15,7 +15,7 @@ async fn redis_conn() -> ConnectionManager {
 /// A due, enabled schedule should get a fresh pending execution, its `next_run_at` pushed
 /// into the future, `last_run_at` stamped, and a job enqueued — while a schedule that
 /// isn't due yet, or is disabled, is left untouched.
-#[sqlx::test]
+#[sqlx::test(migrations = "../api/migrations")]
 async fn run_due_schedules_fires_only_whats_actually_due(pool: PgPool) {
     let workspace_id: Uuid =
         sqlx::query_scalar("INSERT INTO workspaces (name) VALUES ('Acme') RETURNING id")

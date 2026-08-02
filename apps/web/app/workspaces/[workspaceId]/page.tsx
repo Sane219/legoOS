@@ -62,12 +62,20 @@ export default function WorkspacePage() {
       </Link>
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Workflows</h1>
-        <Link
-          href={`/workspaces/${params.workspaceId}/mcp-connections`}
-          className="text-sm text-zinc-500 hover:underline"
-        >
-          MCP connections &rarr;
-        </Link>
+        <div className="flex gap-4">
+          <Link
+            href={`/workspaces/${params.workspaceId}/approvals`}
+            className="text-sm text-zinc-500 hover:underline"
+          >
+            Approvals &rarr;
+          </Link>
+          <Link
+            href={`/workspaces/${params.workspaceId}/mcp-connections`}
+            className="text-sm text-zinc-500 hover:underline"
+          >
+            MCP connections &rarr;
+          </Link>
+        </div>
       </div>
 
       {workflows === null ? (

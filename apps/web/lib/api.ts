@@ -90,6 +90,17 @@ export interface McpTool {
   description: string | null;
 }
 
+export interface ApprovalGate {
+  id: string;
+  execution_id: string;
+  workflow_id: string;
+  workflow_name: string;
+  node_id: string;
+  context: unknown | null;
+  status: string;
+  created_at: string;
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -259,6 +270,37 @@ export function testMcpConnection(
 ): Promise<McpTool[]> {
   return authedRequest(
     `/api/workspaces/${workspaceId}/mcp-connections/${connectionId}/test`,
+    token,
+    { method: "POST" },
+  );
+}
+
+export function listApprovals(
+  token: string,
+  workspaceId: string,
+): Promise<ApprovalGate[]> {
+  return authedRequest(`/api/workspaces/${workspaceId}/approvals`, token);
+}
+
+export function approveGate(
+  token: string,
+  workspaceId: string,
+  gateId: string,
+): Promise<{ status: string }> {
+  return authedRequest(
+    `/api/workspaces/${workspaceId}/approvals/${gateId}/approve`,
+    token,
+    { method: "POST" },
+  );
+}
+
+export function rejectGate(
+  token: string,
+  workspaceId: string,
+  gateId: string,
+): Promise<{ status: string }> {
+  return authedRequest(
+    `/api/workspaces/${workspaceId}/approvals/${gateId}/reject`,
     token,
     { method: "POST" },
   );

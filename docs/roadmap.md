@@ -30,7 +30,7 @@ file up to date — see [CLAUDE.md](../CLAUDE.md) rules.
 - [x] Implement MCP client support in workers (connect to and call tools on an MCP server)
 - [x] Build the MCP connection management UI (add/configure an MCP server per workspace)
 - [x] Implement the approval-gate node type (pause execution, wait for human decision)
-- [ ] Build the approval UI (inbox of pending approvals, approve/reject actions)
+- [x] Build the approval UI (inbox of pending approvals, approve/reject actions)
 - [ ] Implement per-workspace permission checks on agent/workflow/MCP configuration
 
 ## Phase 3: Knowledge + Intelligence

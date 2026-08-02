@@ -44,8 +44,8 @@ file up to date — see [CLAUDE.md](../CLAUDE.md) rules.
 - [x] Implement memory retrieval (surface relevant memory into a new run's context)
 - [x] Implement workflow scheduling (cron-style triggers, stored and executed on time)
 - [x] Build the scheduling UI (create/edit/pause a scheduled trigger for a workflow)
-- [ ] Implement basic evaluation scoring for agent outputs (rule-based and/or LLM-judge)
-- [ ] Implement cost tracking per execution (tokens and estimated $ per LLM call)
+- [x] Implement basic evaluation scoring for agent outputs (rule-based and/or LLM-judge)
+- [x] Implement cost tracking per execution (tokens and estimated $ per LLM call)
 - [ ] Build the evaluation/cost dashboard (trends over time, per-agent and per-workflow)
 
 ## Phase 4: Infra Maturity

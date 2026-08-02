@@ -1,3 +1,4 @@
+pub mod analytics;
 pub mod approvals;
 pub mod auth_extractor;
 pub mod documents;

@@ -152,6 +152,17 @@ pub struct ExecutionResponse {
     pub nodes: Vec<ExecutionNodeResponse>,
 }
 
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct ExecutionAnalyticsResponse {
+    pub execution_id: Uuid,
+    pub status: String,
+    pub started_at: DateTime<Utc>,
+    pub total_cost_usd: f64,
+    pub total_input_tokens: i64,
+    pub total_output_tokens: i64,
+    pub avg_eval_score: Option<f64>,
+}
+
 #[derive(Debug, sqlx::FromRow)]
 pub struct McpConnectionRow {
     pub id: Uuid,

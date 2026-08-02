@@ -30,11 +30,39 @@ pub enum LlmError {
     UnknownProvider(String),
 }
 
+/// Token usage is reported directly by the provider (no estimation) so cost tracking
+/// reflects what was actually billed, not a guess from tokenizing locally.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompletionResponse {
+    pub text: String,
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+}
+
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
-    async fn complete(&self, request: &CompletionRequest) -> Result<String, LlmError>;
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse, LlmError>;
 
     fn name(&self) -> &'static str;
+}
+
+/// Per-million-token USD pricing for known models. Unknown models return `None` rather
+/// than a fabricated number — the caller decides how to surface "cost unknown".
+/// ponytail: hardcoded price list, move to a config file if prices change often enough
+/// to need editing without a redeploy.
+pub fn estimate_cost_usd(model: &str, input_tokens: u32, output_tokens: u32) -> Option<f64> {
+    let (input_per_million, output_per_million) = match model {
+        "claude-opus-4-8" | "claude-opus-4-20250514" => (15.0, 75.0),
+        "claude-sonnet-5" | "claude-sonnet-4-20250514" | "claude-3-5-sonnet-20241022" => {
+            (3.0, 15.0)
+        }
+        "claude-haiku-4-5-20251001" | "claude-3-5-haiku-20241022" => (0.80, 4.0),
+        _ => return None,
+    };
+    Some(
+        (input_tokens as f64 / 1_000_000.0) * input_per_million
+            + (output_tokens as f64 / 1_000_000.0) * output_per_million,
+    )
 }
 
 /// Cloud provider backed by the Anthropic Messages API.
@@ -71,7 +99,7 @@ impl AnthropicProvider {
 
 #[async_trait]
 impl LlmProvider for AnthropicProvider {
-    async fn complete(&self, request: &CompletionRequest) -> Result<String, LlmError> {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse, LlmError> {
         let response = self
             .client
             .post(format!("{}/v1/messages", self.base_url))
@@ -90,12 +118,30 @@ impl LlmProvider for AnthropicProvider {
             });
         }
 
-        body.get("content")
+        let text = body
+            .get("content")
             .and_then(|c| c.get(0))
             .and_then(|block| block.get("text"))
             .and_then(|t| t.as_str())
             .map(str::to_string)
-            .ok_or_else(|| LlmError::UnexpectedResponse(body.to_string()))
+            .ok_or_else(|| LlmError::UnexpectedResponse(body.to_string()))?;
+
+        let input_tokens = body
+            .get("usage")
+            .and_then(|u| u.get("input_tokens"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as u32;
+        let output_tokens = body
+            .get("usage")
+            .and_then(|u| u.get("output_tokens"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as u32;
+
+        Ok(CompletionResponse {
+            text,
+            input_tokens,
+            output_tokens,
+        })
     }
 
     fn name(&self) -> &'static str {
@@ -143,7 +189,7 @@ impl OllamaProvider {
 
 #[async_trait]
 impl LlmProvider for OllamaProvider {
-    async fn complete(&self, request: &CompletionRequest) -> Result<String, LlmError> {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse, LlmError> {
         let response = self
             .client
             .post(format!("{}/api/chat", self.base_url))
@@ -160,11 +206,26 @@ impl LlmProvider for OllamaProvider {
             });
         }
 
-        body.get("message")
+        let text = body
+            .get("message")
             .and_then(|m| m.get("content"))
             .and_then(|c| c.as_str())
             .map(str::to_string)
-            .ok_or_else(|| LlmError::UnexpectedResponse(body.to_string()))
+            .ok_or_else(|| LlmError::UnexpectedResponse(body.to_string()))?;
+
+        // Ollama runs locally, so there's no dollar cost — but the token counts are still
+        // useful to see in the dashboard for capacity/latency reasoning.
+        let input_tokens = body
+            .get("prompt_eval_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as u32;
+        let output_tokens = body.get("eval_count").and_then(Value::as_u64).unwrap_or(0) as u32;
+
+        Ok(CompletionResponse {
+            text,
+            input_tokens,
+            output_tokens,
+        })
     }
 
     fn name(&self) -> &'static str {

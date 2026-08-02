@@ -134,8 +134,12 @@ async fn resolves_saved_connection_and_calls_its_tool(pool: PgPool) {
         async fn complete(
             &self,
             request: &llm::CompletionRequest,
-        ) -> Result<String, llm::LlmError> {
-            Ok(request.messages[0].content.clone())
+        ) -> Result<llm::CompletionResponse, llm::LlmError> {
+            Ok(llm::CompletionResponse {
+                text: request.messages[0].content.clone(),
+                input_tokens: 0,
+                output_tokens: 0,
+            })
         }
         fn name(&self) -> &'static str {
             "echo"
@@ -175,6 +179,11 @@ async fn resolves_saved_connection_and_calls_its_tool(pool: PgPool) {
     assert_eq!(status, "succeeded");
     assert_eq!(
         output,
-        Some(serde_json::json!({ "response": "weather report: sunny in Boston" }))
+        Some(serde_json::json!({
+            "response": "weather report: sunny in Boston",
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cost_usd": null,
+        }))
     );
 }

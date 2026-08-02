@@ -48,8 +48,15 @@ struct EchoProvider;
 
 #[async_trait::async_trait]
 impl llm::LlmProvider for EchoProvider {
-    async fn complete(&self, request: &llm::CompletionRequest) -> Result<String, llm::LlmError> {
-        Ok(request.messages[0].content.clone())
+    async fn complete(
+        &self,
+        request: &llm::CompletionRequest,
+    ) -> Result<llm::CompletionResponse, llm::LlmError> {
+        Ok(llm::CompletionResponse {
+            text: request.messages[0].content.clone(),
+            input_tokens: 0,
+            output_tokens: 0,
+        })
     }
 
     fn name(&self) -> &'static str {
@@ -106,6 +113,11 @@ async fn agent_node_calls_mcp_tool_and_renders_result_into_prompt() {
     let node_result = result.nodes.iter().find(|n| n.node_id == agent).unwrap();
     assert_eq!(
         node_result.output,
-        Some(serde_json::json!({ "response": "weather report: sunny in Boston" }))
+        Some(serde_json::json!({
+            "response": "weather report: sunny in Boston",
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cost_usd": null,
+        }))
     );
 }

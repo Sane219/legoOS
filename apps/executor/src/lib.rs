@@ -657,10 +657,156 @@ async fn run_node(
                 .await
                 .map_err(|e| format!("agent node LLM call failed: {e}"))?;
 
-            Ok(serde_json::json!({ "response": response }))
+            Ok(serde_json::json!({
+                "response": response.text,
+                "input_tokens": response.input_tokens,
+                "output_tokens": response.output_tokens,
+                "cost_usd": llm::estimate_cost_usd(model, response.input_tokens, response.output_tokens),
+            }))
+        }
+
+        "evaluate" => {
+            let context = merge_inputs(inputs);
+            let field = node
+                .config
+                .get("field")
+                .and_then(Value::as_str)
+                .unwrap_or("response");
+            let text = context
+                .get(field)
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("evaluate node: no string field \"{field}\" upstream"))?
+                .to_string();
+
+            let mode = node
+                .config
+                .get("mode")
+                .and_then(Value::as_str)
+                .unwrap_or("rule");
+
+            match mode {
+                "rule" => {
+                    let rules = node
+                        .config
+                        .get("rules")
+                        .and_then(Value::as_array)
+                        .ok_or_else(|| "evaluate node missing \"rules\" in config".to_string())?;
+                    if rules.is_empty() {
+                        return Err("evaluate node has an empty \"rules\" list".to_string());
+                    }
+
+                    let mut passed_count = 0usize;
+                    for rule in rules {
+                        if evaluate_rule(rule, &text)? {
+                            passed_count += 1;
+                        }
+                    }
+                    let score = passed_count as f64 / rules.len() as f64;
+                    Ok(serde_json::json!({
+                        "score": score,
+                        "passed": passed_count == rules.len(),
+                    }))
+                }
+                "llm_judge" => {
+                    let provider = provider.ok_or_else(|| {
+                        "no LLM provider configured (set LLM_PROVIDER)".to_string()
+                    })?;
+                    let judge_prompt = node
+                        .config
+                        .get("judge_prompt")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| {
+                            "evaluate node missing \"judge_prompt\" in config".to_string()
+                        })?;
+                    let model = node
+                        .config
+                        .get("model")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| "evaluate node missing \"model\" in config".to_string())?;
+
+                    let prompt = render_template(judge_prompt, &context);
+                    let request = CompletionRequest {
+                        model: model.to_string(),
+                        system: Some(
+                            "Respond with ONLY a JSON object: \
+                             {\"score\": <number 0.0-1.0>, \"rationale\": \"<short reason>\"}"
+                                .to_string(),
+                        ),
+                        messages: vec![ChatMessage {
+                            role: "user".to_string(),
+                            content: prompt,
+                        }],
+                        max_tokens: 256,
+                    };
+                    let response = provider
+                        .complete(&request)
+                        .await
+                        .map_err(|e| format!("evaluate node LLM call failed: {e}"))?;
+
+                    let judged: Value = serde_json::from_str(response.text.trim())
+                        .map_err(|e| format!("evaluate node: judge did not return JSON: {e}"))?;
+                    let score = judged
+                        .get("score")
+                        .and_then(Value::as_f64)
+                        .ok_or_else(|| "evaluate node: judge JSON missing \"score\"".to_string())?;
+                    let rationale = judged
+                        .get("rationale")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+
+                    Ok(serde_json::json!({
+                        "score": score,
+                        "passed": score >= 0.5,
+                        "rationale": rationale,
+                        "cost_usd": llm::estimate_cost_usd(model, response.input_tokens, response.output_tokens),
+                    }))
+                }
+                other => Err(format!("evaluate node: unknown mode \"{other}\"")),
+            }
         }
 
         other => Err(format!("unknown node type: {other}")),
+    }
+}
+
+/// One rule in an `evaluate` node's rule-based mode. Returns whether `text` satisfies it.
+fn evaluate_rule(rule: &Value, text: &str) -> Result<bool, String> {
+    let rule_type = rule
+        .get("type")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "evaluate rule missing \"type\"".to_string())?;
+    match rule_type {
+        "contains" => {
+            let value = rule
+                .get("value")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "\"contains\" rule missing \"value\"".to_string())?;
+            Ok(text.contains(value))
+        }
+        "not_contains" => {
+            let value = rule
+                .get("value")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "\"not_contains\" rule missing \"value\"".to_string())?;
+            Ok(!text.contains(value))
+        }
+        "regex" => {
+            let pattern = rule
+                .get("pattern")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "\"regex\" rule missing \"pattern\"".to_string())?;
+            let re = regex::Regex::new(pattern).map_err(|e| format!("invalid regex: {e}"))?;
+            Ok(re.is_match(text))
+        }
+        "min_length" => {
+            let min = rule
+                .get("value")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| "\"min_length\" rule missing numeric \"value\"".to_string())?;
+            Ok(text.len() as u64 >= min)
+        }
+        other => Err(format!("unknown evaluate rule type: {other}")),
     }
 }
 
@@ -688,8 +834,15 @@ mod tests {
 
     #[async_trait::async_trait]
     impl LlmProvider for EchoProvider {
-        async fn complete(&self, request: &CompletionRequest) -> Result<String, llm::LlmError> {
-            Ok(request.messages[0].content.clone())
+        async fn complete(
+            &self,
+            request: &CompletionRequest,
+        ) -> Result<llm::CompletionResponse, llm::LlmError> {
+            Ok(llm::CompletionResponse {
+                text: request.messages[0].content.clone(),
+                input_tokens: 10,
+                output_tokens: 5,
+            })
         }
 
         fn name(&self) -> &'static str {
@@ -928,8 +1081,118 @@ mod tests {
         assert_eq!(result.status, ExecutionStatus::Succeeded);
         assert_eq!(
             *output_of(&result, agent),
-            serde_json::json!({ "response": "hello Sanket" })
+            serde_json::json!({
+                "response": "hello Sanket",
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "cost_usd": null,
+            })
         );
+    }
+
+    #[tokio::test]
+    async fn evaluate_rule_mode_scores_fraction_of_rules_passed() {
+        let input = Uuid::new_v4();
+        let evaluate = Uuid::new_v4();
+
+        let nodes = vec![
+            node(
+                input,
+                "input",
+                serde_json::json!({ "value": { "response": "the cat sat on the mat" } }),
+            ),
+            node(
+                evaluate,
+                "evaluate",
+                serde_json::json!({
+                    "mode": "rule",
+                    "rules": [
+                        { "type": "contains", "value": "cat" },
+                        { "type": "contains", "value": "dog" },
+                        { "type": "min_length", "value": 5 },
+                    ],
+                }),
+            ),
+        ];
+        let edges = vec![edge(input, evaluate, None)];
+
+        let result = execute(&nodes, &edges, None, None, None, None).await;
+
+        assert_eq!(result.status, ExecutionStatus::Succeeded);
+        assert_eq!(
+            *output_of(&result, evaluate),
+            serde_json::json!({ "score": 2.0 / 3.0, "passed": false })
+        );
+    }
+
+    #[tokio::test]
+    async fn evaluate_llm_judge_mode_parses_score_from_provider() {
+        struct JudgeProvider;
+        #[async_trait::async_trait]
+        impl LlmProvider for JudgeProvider {
+            async fn complete(
+                &self,
+                _: &CompletionRequest,
+            ) -> Result<llm::CompletionResponse, llm::LlmError> {
+                Ok(llm::CompletionResponse {
+                    text: r#"{"score": 0.9, "rationale": "on topic"}"#.to_string(),
+                    input_tokens: 20,
+                    output_tokens: 10,
+                })
+            }
+            fn name(&self) -> &'static str {
+                "judge"
+            }
+        }
+
+        let input = Uuid::new_v4();
+        let evaluate = Uuid::new_v4();
+
+        let nodes = vec![
+            node(
+                input,
+                "input",
+                serde_json::json!({ "value": { "response": "a great answer" } }),
+            ),
+            node(
+                evaluate,
+                "evaluate",
+                serde_json::json!({
+                    "mode": "llm_judge",
+                    "model": "test-model",
+                    "judge_prompt": "Judge this answer: {{response}}",
+                }),
+            ),
+        ];
+        let edges = vec![edge(input, evaluate, None)];
+
+        let result = execute(&nodes, &edges, Some(&JudgeProvider), None, None, None).await;
+
+        assert_eq!(result.status, ExecutionStatus::Succeeded);
+        assert_eq!(
+            *output_of(&result, evaluate),
+            serde_json::json!({
+                "score": 0.9,
+                "passed": true,
+                "rationale": "on topic",
+                "cost_usd": null,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn evaluate_node_without_matching_field_fails_clearly() {
+        let evaluate = Uuid::new_v4();
+        let nodes = vec![node(
+            evaluate,
+            "evaluate",
+            serde_json::json!({ "mode": "rule", "rules": [{ "type": "contains", "value": "x" }] }),
+        )];
+
+        let result = execute(&nodes, &[], None, None, None, None).await;
+
+        assert_eq!(result.status, ExecutionStatus::Failed);
+        assert_eq!(status_of(&result, evaluate), NodeStatus::Failed);
     }
 
     #[tokio::test]
@@ -1046,7 +1309,10 @@ mod tests {
         struct FailingProvider;
         #[async_trait::async_trait]
         impl LlmProvider for FailingProvider {
-            async fn complete(&self, _: &CompletionRequest) -> Result<String, llm::LlmError> {
+            async fn complete(
+                &self,
+                _: &CompletionRequest,
+            ) -> Result<llm::CompletionResponse, llm::LlmError> {
                 Err(llm::LlmError::UnknownProvider(
                     "should not be called".into(),
                 ))

@@ -11,6 +11,7 @@ COPY apps/executor apps/executor
 COPY apps/llm apps/llm
 COPY apps/mcp apps/mcp
 COPY apps/queue apps/queue
+COPY apps/rag apps/rag
 COPY apps/api/Cargo.toml apps/api/Cargo.toml
 COPY apps/api/src apps/api/src
 COPY apps/api/migrations apps/api/migrations

@@ -19,6 +19,9 @@ async fn app(pool: PgPool) -> axum::Router {
     let redis = ConnectionManager::new(client.clone())
         .await
         .expect("failed to connect to redis for tests");
+    let qdrant_url =
+        std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://127.0.0.1:6334".to_string());
+    let rag_client = rag::RagClient::connect(&qdrant_url).expect("invalid QDRANT_URL");
 
     routes::build(AppState {
         pool,
@@ -26,6 +29,8 @@ async fn app(pool: PgPool) -> axum::Router {
         redis,
         redis_client: client,
         mcp_credential_key: MCP_CREDENTIAL_KEY.to_string(),
+        rag_client,
+        embedding_provider: None,
     })
 }
 

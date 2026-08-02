@@ -35,9 +35,9 @@ file up to date — see [CLAUDE.md](../CLAUDE.md) rules.
 
 ## Phase 3: Knowledge + Intelligence
 
-- [ ] Implement document upload and storage for knowledge bases
-- [ ] Implement document chunking and embedding generation pipeline
-- [ ] Integrate Qdrant for embedding storage and similarity search
+- [x] Implement document upload and storage for knowledge bases
+- [x] Implement document chunking and embedding generation pipeline
+- [x] Integrate Qdrant for embedding storage and similarity search
 - [ ] Implement the RAG node type (retrieve relevant chunks, inject into agent context)
 - [ ] Design and implement the long-term memory data model (per-agent, per-workspace)
 - [ ] Implement memory write (persist relevant facts/results after a run)

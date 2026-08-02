@@ -1,5 +1,6 @@
 pub mod approvals;
 pub mod auth_extractor;
+pub mod documents;
 pub mod error;
 pub mod handlers;
 pub mod jwt;

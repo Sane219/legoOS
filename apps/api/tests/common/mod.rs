@@ -11,6 +11,7 @@ use http_body_util::BodyExt;
 use redis::aio::ConnectionManager;
 use serde_json::{Value, json};
 use sqlx::PgPool;
+use std::sync::Arc;
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -30,8 +31,30 @@ pub async fn redis_conn() -> ConnectionManager {
         .expect("failed to connect to redis for tests")
 }
 
+pub fn qdrant_url() -> String {
+    std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://127.0.0.1:6334".to_string())
+}
+
+/// A deterministic, network-free embedding: 4 dimensions derived from the text's length
+/// and byte sum. Lets ingestion tests exercise the real success path (chunk -> embed ->
+/// upsert into a real Qdrant) without depending on Ollama/Voyage being configured.
+pub struct FakeEmbeddingProvider;
+
+#[async_trait::async_trait]
+impl llm::EmbeddingProvider for FakeEmbeddingProvider {
+    async fn embed(&self, text: &str) -> Result<Vec<f32>, llm::LlmError> {
+        let sum: u32 = text.bytes().map(u32::from).sum();
+        Ok(vec![text.len() as f32, sum as f32, (sum % 97) as f32, 1.0])
+    }
+
+    fn name(&self) -> &'static str {
+        "fake"
+    }
+}
+
 pub async fn app(pool: PgPool) -> axum::Router {
     let redis = redis_conn().await;
+    let rag_client = rag::RagClient::connect(&qdrant_url()).expect("invalid QDRANT_URL");
 
     routes::build(AppState {
         pool,
@@ -39,6 +62,8 @@ pub async fn app(pool: PgPool) -> axum::Router {
         redis,
         redis_client: redis_client(),
         mcp_credential_key: MCP_CREDENTIAL_KEY.to_string(),
+        rag_client,
+        embedding_provider: Some(Arc::new(FakeEmbeddingProvider)),
     })
 }
 

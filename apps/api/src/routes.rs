@@ -3,7 +3,9 @@ use axum::{
     routing::{get, post},
 };
 
-use crate::{approvals, handlers, mcp_connections, state::AppState, trace, workflows, workspaces};
+use crate::{
+    approvals, documents, handlers, mcp_connections, state::AppState, trace, workflows, workspaces,
+};
 
 pub fn build(state: AppState) -> Router {
     Router::new()
@@ -63,6 +65,14 @@ pub fn build(state: AppState) -> Router {
         .route(
             "/api/workspaces/{workspace_id}/approvals/{gate_id}/reject",
             post(approvals::reject),
+        )
+        .route(
+            "/api/workspaces/{workspace_id}/documents",
+            get(documents::list_documents).post(documents::create_document),
+        )
+        .route(
+            "/api/workspaces/{workspace_id}/documents/{document_id}",
+            axum::routing::delete(documents::delete_document),
         )
         .with_state(state)
 }

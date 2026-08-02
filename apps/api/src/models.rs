@@ -224,3 +224,35 @@ impl From<ApprovalGateRow> for ApprovalGateResponse {
         }
     }
 }
+
+#[derive(Debug, sqlx::FromRow)]
+pub struct DocumentRow {
+    pub id: Uuid,
+    pub name: String,
+    pub status: String,
+    pub error: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Never carries `content` back to the client in the list view — a knowledge base can
+/// hold large documents; the detail endpoint returns it if a caller actually needs it.
+#[derive(Debug, Serialize)]
+pub struct DocumentResponse {
+    pub id: Uuid,
+    pub name: String,
+    pub status: String,
+    pub error: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+impl From<DocumentRow> for DocumentResponse {
+    fn from(row: DocumentRow) -> Self {
+        DocumentResponse {
+            id: row.id,
+            name: row.name,
+            status: row.status,
+            error: row.error,
+            created_at: row.created_at,
+        }
+    }
+}

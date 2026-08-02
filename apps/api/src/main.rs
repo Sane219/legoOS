@@ -2,6 +2,7 @@ use anyhow::Context;
 use api::{routes, state::AppState};
 use redis::aio::ConnectionManager;
 use sqlx::postgres::PgPoolOptions;
+use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
 use tracing::Level;
@@ -24,6 +25,8 @@ async fn main() -> anyhow::Result<()> {
     if mcp_credential_key.len() != 64 {
         anyhow::bail!("MCP_CREDENTIAL_KEY must be 64 hex characters (32 bytes)");
     }
+    let qdrant_url =
+        std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://127.0.0.1:6334".to_string());
 
     let pool = PgPoolOptions::new()
         .max_connections(10)
@@ -41,12 +44,25 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("failed to connect to redis")?;
 
+    let rag_client = rag::RagClient::connect(&qdrant_url).context("invalid QDRANT_URL")?;
+
+    let embedding_provider: Option<Arc<dyn llm::EmbeddingProvider>> =
+        match llm::embedding_provider_from_env() {
+            Ok(p) => Some(Arc::from(p)),
+            Err(e) => {
+                tracing::warn!(error = %e, "no embedding provider configured; document ingestion will fail");
+                None
+            }
+        };
+
     let state = AppState {
         pool,
         jwt_secret,
         redis,
         redis_client,
         mcp_credential_key,
+        rag_client,
+        embedding_provider,
     };
     let app = routes::build(state)
         .layer(

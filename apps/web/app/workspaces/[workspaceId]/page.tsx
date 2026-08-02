@@ -60,7 +60,15 @@ export default function WorkspacePage() {
       <Link href="/dashboard" className="text-sm text-zinc-500 hover:underline">
         &larr; Dashboard
       </Link>
-      <h1 className="text-2xl font-semibold">Workflows</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold">Workflows</h1>
+        <Link
+          href={`/workspaces/${params.workspaceId}/mcp-connections`}
+          className="text-sm text-zinc-500 hover:underline"
+        >
+          MCP connections &rarr;
+        </Link>
+      </div>
 
       {workflows === null ? (
         <p className="text-sm text-zinc-500">Loading...</p>

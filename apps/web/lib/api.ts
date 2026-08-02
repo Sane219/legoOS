@@ -77,6 +77,19 @@ export type ExecutionTraceEvent =
   | ExecutionTraceNodeEvent
   | ExecutionTraceFinalEvent;
 
+export interface McpConnection {
+  id: string;
+  name: string;
+  url: string;
+  has_token: boolean;
+  created_at: string;
+}
+
+export interface McpTool {
+  name: string;
+  description: string | null;
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -204,6 +217,48 @@ export function runWorkflow(
 ): Promise<ExecutionResult> {
   return authedRequest(
     `/api/workspaces/${workspaceId}/workflows/${workflowId}/executions`,
+    token,
+    { method: "POST" },
+  );
+}
+
+export function listMcpConnections(
+  token: string,
+  workspaceId: string,
+): Promise<McpConnection[]> {
+  return authedRequest(`/api/workspaces/${workspaceId}/mcp-connections`, token);
+}
+
+export function createMcpConnection(
+  token: string,
+  workspaceId: string,
+  connection: { name: string; url: string; bearer_token?: string },
+): Promise<McpConnection> {
+  return authedRequest(`/api/workspaces/${workspaceId}/mcp-connections`, token, {
+    method: "POST",
+    body: JSON.stringify(connection),
+  });
+}
+
+export function deleteMcpConnection(
+  token: string,
+  workspaceId: string,
+  connectionId: string,
+): Promise<{ deleted: true }> {
+  return authedRequest(
+    `/api/workspaces/${workspaceId}/mcp-connections/${connectionId}`,
+    token,
+    { method: "DELETE" },
+  );
+}
+
+export function testMcpConnection(
+  token: string,
+  workspaceId: string,
+  connectionId: string,
+): Promise<McpTool[]> {
+  return authedRequest(
+    `/api/workspaces/${workspaceId}/mcp-connections/${connectionId}/test`,
     token,
     { method: "POST" },
   );

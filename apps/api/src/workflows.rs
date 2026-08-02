@@ -286,7 +286,8 @@ pub async fn run_workflow(
         })
         .collect();
 
-    let result = executor::execute(&dag_nodes, &dag_edges);
+    let provider = llm::provider_from_env().ok();
+    let result = executor::execute(&dag_nodes, &dag_edges, provider.as_deref()).await;
 
     let status_str = match result.status {
         executor::ExecutionStatus::Succeeded => "succeeded",

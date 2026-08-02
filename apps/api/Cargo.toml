@@ -10,6 +10,7 @@ axum = "0.8.9"
 chrono = { version = "0.4.45", features = ["serde"] }
 dotenvy = "0.15.7"
 executor = { version = "0.1.0", path = "../executor" }
+llm = { version = "0.1.0", path = "../llm" }
 jsonwebtoken = { version = "11.0.0", default-features = false, features = ["rust_crypto"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 serde = { version = "1.0.229", features = ["derive"] }

@@ -1,3 +1,4 @@
+use llm::{ChatMessage, CompletionRequest, LlmProvider};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
 use uuid::Uuid;
@@ -43,12 +44,19 @@ pub struct ExecutionResult {
     pub nodes: Vec<NodeResult>,
 }
 
-/// Runs a workflow graph to completion synchronously, in-process (no queue/workers yet).
+/// Runs a workflow graph to completion in-process (no queue/workers yet).
 ///
 /// Nodes are processed in topological order. A node whose inbound edges never fire (its
 /// upstream failed, or a condition edge didn't match) is marked `Skipped` rather than run,
 /// and that skip propagates downstream unless another path also feeds the same node.
-pub fn execute(nodes: &[Node], edges: &[Edge]) -> ExecutionResult {
+///
+/// `provider` is used by `agent` nodes to call an LLM; pass `None` if no provider is
+/// configured (agent nodes will then fail with a clear error, everything else is unaffected).
+pub async fn execute(
+    nodes: &[Node],
+    edges: &[Edge],
+    provider: Option<&dyn LlmProvider>,
+) -> ExecutionResult {
     let node_map: HashMap<Uuid, &Node> = nodes.iter().map(|n| (n.id, n)).collect();
 
     let mut inbound: HashMap<Uuid, Vec<&Edge>> = HashMap::new();
@@ -104,7 +112,7 @@ pub fn execute(nodes: &[Node], edges: &[Edge]) -> ExecutionResult {
             continue;
         };
 
-        match run_node(node, &inputs) {
+        match run_node(node, &inputs, provider).await {
             Ok(output) => {
                 propagate(
                     node_id,
@@ -214,7 +222,30 @@ fn merge_inputs(inputs: &[Value]) -> Value {
     }
 }
 
-fn run_node(node: &Node, inputs: &[Value]) -> Result<Value, String> {
+/// Replaces `{{field}}` placeholders in `template` with top-level values from `context`.
+/// String values are substituted verbatim; other JSON values are substituted as JSON.
+fn render_template(template: &str, context: &Value) -> String {
+    let Some(object) = context.as_object() else {
+        return template.to_string();
+    };
+
+    let mut rendered = template.to_string();
+    for (key, value) in object {
+        let placeholder = format!("{{{{{key}}}}}");
+        let replacement = match value {
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        rendered = rendered.replace(&placeholder, &replacement);
+    }
+    rendered
+}
+
+async fn run_node(
+    node: &Node,
+    inputs: &[Value],
+    provider: Option<&dyn LlmProvider>,
+) -> Result<Value, String> {
     match node.node_type.as_str() {
         "input" => Ok(node.config.get("value").cloned().unwrap_or(Value::Null)),
 
@@ -249,6 +280,54 @@ fn run_node(node: &Node, inputs: &[Value]) -> Result<Value, String> {
             Ok(serde_json::json!({ "result": actual == expected }))
         }
 
+        "agent" => {
+            let provider = provider
+                .ok_or_else(|| "no LLM provider configured (set LLM_PROVIDER)".to_string())?;
+
+            let prompt_template = node
+                .config
+                .get("prompt")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "agent node missing \"prompt\" in config".to_string())?;
+            let model = node
+                .config
+                .get("model")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "agent node missing \"model\" in config".to_string())?;
+            let system = node
+                .config
+                .get("system")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let max_tokens = node
+                .config
+                .get("max_tokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(1024) as u32;
+            // Tool list support (config["tools"]) lands with MCP client support later in Phase 2;
+            // the field is accepted here so node configs can already carry it.
+
+            let context = merge_inputs(inputs);
+            let prompt = render_template(prompt_template, &context);
+
+            let request = CompletionRequest {
+                model: model.to_string(),
+                system,
+                messages: vec![ChatMessage {
+                    role: "user".to_string(),
+                    content: prompt,
+                }],
+                max_tokens,
+            };
+
+            let response = provider
+                .complete(&request)
+                .await
+                .map_err(|e| format!("agent node LLM call failed: {e}"))?;
+
+            Ok(serde_json::json!({ "response": response }))
+        }
+
         other => Err(format!("unknown node type: {other}")),
     }
 }
@@ -273,6 +352,19 @@ mod tests {
         }
     }
 
+    struct EchoProvider;
+
+    #[async_trait::async_trait]
+    impl LlmProvider for EchoProvider {
+        async fn complete(&self, request: &CompletionRequest) -> Result<String, llm::LlmError> {
+            Ok(request.messages[0].content.clone())
+        }
+
+        fn name(&self) -> &'static str {
+            "echo"
+        }
+    }
+
     fn status_of(result: &ExecutionResult, id: Uuid) -> NodeStatus {
         result
             .nodes
@@ -293,8 +385,8 @@ mod tests {
             .unwrap()
     }
 
-    #[test]
-    fn linear_chain_propagates_and_merges() {
+    #[tokio::test]
+    async fn linear_chain_propagates_and_merges() {
         let a = Uuid::new_v4();
         let b = Uuid::new_v4();
         let c = Uuid::new_v4();
@@ -306,7 +398,7 @@ mod tests {
         ];
         let edges = vec![edge(a, b, None), edge(b, c, None)];
 
-        let result = execute(&nodes, &edges);
+        let result = execute(&nodes, &edges, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Succeeded);
         assert_eq!(
@@ -315,8 +407,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn condition_true_branch_runs_and_false_branch_is_skipped() {
+    #[tokio::test]
+    async fn condition_true_branch_runs_and_false_branch_is_skipped() {
         let input = Uuid::new_v4();
         let cond = Uuid::new_v4();
         let on_true = Uuid::new_v4();
@@ -350,15 +442,15 @@ mod tests {
             edge(cond, on_false, Some("false")),
         ];
 
-        let result = execute(&nodes, &edges);
+        let result = execute(&nodes, &edges, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Succeeded);
         assert_eq!(status_of(&result, on_true), NodeStatus::Succeeded);
         assert_eq!(status_of(&result, on_false), NodeStatus::Skipped);
     }
 
-    #[test]
-    fn condition_false_branch_runs_and_true_branch_is_skipped() {
+    #[tokio::test]
+    async fn condition_false_branch_runs_and_true_branch_is_skipped() {
         let input = Uuid::new_v4();
         let cond = Uuid::new_v4();
         let on_true = Uuid::new_v4();
@@ -384,14 +476,14 @@ mod tests {
             edge(cond, on_false, Some("false")),
         ];
 
-        let result = execute(&nodes, &edges);
+        let result = execute(&nodes, &edges, None).await;
 
         assert_eq!(status_of(&result, on_true), NodeStatus::Skipped);
         assert_eq!(status_of(&result, on_false), NodeStatus::Succeeded);
     }
 
-    #[test]
-    fn condition_missing_field_defaults_to_false() {
+    #[tokio::test]
+    async fn condition_missing_field_defaults_to_false() {
         let input = Uuid::new_v4();
         let cond = Uuid::new_v4();
 
@@ -405,7 +497,7 @@ mod tests {
         ];
         let edges = vec![edge(input, cond, None)];
 
-        let result = execute(&nodes, &edges);
+        let result = execute(&nodes, &edges, None).await;
 
         assert_eq!(
             *output_of(&result, cond),
@@ -413,8 +505,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn fan_in_collects_all_inputs() {
+    #[tokio::test]
+    async fn fan_in_collects_all_inputs() {
         let a = Uuid::new_v4();
         let b = Uuid::new_v4();
         let join = Uuid::new_v4();
@@ -426,7 +518,7 @@ mod tests {
         ];
         let edges = vec![edge(a, join, None), edge(b, join, None)];
 
-        let result = execute(&nodes, &edges);
+        let result = execute(&nodes, &edges, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Succeeded);
         let output = output_of(&result, join);
@@ -434,18 +526,18 @@ mod tests {
         assert_eq!(inputs.len(), 2);
     }
 
-    #[test]
-    fn unknown_node_type_fails() {
+    #[tokio::test]
+    async fn unknown_node_type_fails() {
         let a = Uuid::new_v4();
         let nodes = vec![node(a, "bogus", Value::Null)];
-        let result = execute(&nodes, &[]);
+        let result = execute(&nodes, &[], None).await;
 
         assert_eq!(result.status, ExecutionStatus::Failed);
         assert_eq!(status_of(&result, a), NodeStatus::Failed);
     }
 
-    #[test]
-    fn upstream_failure_skips_downstream_but_marks_execution_failed() {
+    #[tokio::test]
+    async fn upstream_failure_skips_downstream_but_marks_execution_failed() {
         let a = Uuid::new_v4();
         let b = Uuid::new_v4();
 
@@ -455,15 +547,15 @@ mod tests {
         ];
         let edges = vec![edge(a, b, None)];
 
-        let result = execute(&nodes, &edges);
+        let result = execute(&nodes, &edges, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Failed);
         assert_eq!(status_of(&result, a), NodeStatus::Failed);
         assert_eq!(status_of(&result, b), NodeStatus::Skipped);
     }
 
-    #[test]
-    fn cycle_leaves_nodes_unresolved_and_fails() {
+    #[tokio::test]
+    async fn cycle_leaves_nodes_unresolved_and_fails() {
         let a = Uuid::new_v4();
         let b = Uuid::new_v4();
 
@@ -473,10 +565,49 @@ mod tests {
         ];
         let edges = vec![edge(a, b, None), edge(b, a, None)];
 
-        let result = execute(&nodes, &edges);
+        let result = execute(&nodes, &edges, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Failed);
         assert_eq!(status_of(&result, a), NodeStatus::Failed);
         assert_eq!(status_of(&result, b), NodeStatus::Failed);
+    }
+
+    #[tokio::test]
+    async fn agent_node_renders_template_and_calls_provider() {
+        let input = Uuid::new_v4();
+        let agent = Uuid::new_v4();
+
+        let nodes = vec![
+            node(input, "input", serde_json::json!({ "value": { "name": "Sanket" } })),
+            node(
+                agent,
+                "agent",
+                serde_json::json!({ "prompt": "hello {{name}}", "model": "test-model" }),
+            ),
+        ];
+        let edges = vec![edge(input, agent, None)];
+
+        let result = execute(&nodes, &edges, Some(&EchoProvider)).await;
+
+        assert_eq!(result.status, ExecutionStatus::Succeeded);
+        assert_eq!(
+            *output_of(&result, agent),
+            serde_json::json!({ "response": "hello Sanket" })
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_node_without_provider_fails() {
+        let a = Uuid::new_v4();
+        let nodes = vec![node(
+            a,
+            "agent",
+            serde_json::json!({ "prompt": "hi", "model": "test-model" }),
+        )];
+
+        let result = execute(&nodes, &[], None).await;
+
+        assert_eq!(result.status, ExecutionStatus::Failed);
+        assert_eq!(status_of(&result, a), NodeStatus::Failed);
     }
 }

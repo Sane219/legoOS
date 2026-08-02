@@ -116,3 +116,94 @@ async fn execution_trace_streams_node_results_then_final(pool: PgPool) {
 
     let _ = socket.close(None).await;
 }
+
+/// The frontend can't set a custom `Authorization` header on a WS handshake (browsers
+/// don't allow it), so it authenticates via `?token=` instead — and connects only after
+/// the execution has already finished, exercising the immediate-`Final`-replay path.
+#[sqlx::test]
+async fn execution_trace_accepts_query_token_and_replays_finished_execution(pool: PgPool) {
+    let app = common::app(pool.clone()).await;
+    let token = register(app.clone(), "owner@example.com", "hunter22").await;
+    let workspace_id = create_workspace(app.clone(), &token, "Acme").await;
+
+    let create_response = app
+        .clone()
+        .oneshot(authed_json_request(
+            "POST",
+            &format!("/api/workspaces/{workspace_id}/workflows"),
+            &token,
+            json!({ "name": "Workflow" }),
+        ))
+        .await
+        .unwrap();
+    let workflow_id = json_body(create_response).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let input_node = Uuid::new_v4();
+    app.clone()
+        .oneshot(authed_json_request(
+            "PUT",
+            &format!("/api/workspaces/{workspace_id}/workflows/{workflow_id}"),
+            &token,
+            json!({
+                "nodes": [{ "id": input_node, "node_type": "input", "config": { "value": 1 }, "position_x": 0.0, "position_y": 0.0 }],
+                "edges": [],
+            }),
+        ))
+        .await
+        .unwrap();
+
+    let run_response = app
+        .clone()
+        .oneshot(authed_request(
+            "POST",
+            &format!("/api/workspaces/{workspace_id}/workflows/{workflow_id}/executions"),
+            &token,
+        ))
+        .await
+        .unwrap();
+    let run_body = json_body(run_response).await;
+    let execution_id = Uuid::parse_str(run_body["id"].as_str().unwrap()).unwrap();
+    let workflow_uuid = Uuid::parse_str(&workflow_id).unwrap();
+
+    // Finish the execution before connecting at all.
+    common::run_execution_inline(&pool, execution_id, workflow_uuid).await;
+
+    let base_url = spawn(app).await;
+    let url = format!(
+        "{base_url}/api/workspaces/{workspace_id}/workflows/{workflow_id}/executions/{execution_id}/trace?token={token}"
+    );
+    let request = url.into_client_request().unwrap();
+    assert!(!request.headers().contains_key(AUTHORIZATION));
+
+    let (mut socket, response) = connect_async(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
+
+    let mut saw_node_result = false;
+    let mut saw_final = false;
+    for _ in 0..10 {
+        let Some(Ok(msg)) = tokio::time::timeout(std::time::Duration::from_secs(5), socket.next())
+            .await
+            .expect("timed out waiting for a trace event")
+        else {
+            break;
+        };
+        let event: Value = serde_json::from_str(&msg.into_text().unwrap()).unwrap();
+        match event["type"].as_str().unwrap() {
+            "node_result" => saw_node_result = true,
+            "final" => {
+                saw_final = true;
+                assert_eq!(event["status"], "succeeded");
+                break;
+            }
+            other => panic!("unexpected event type: {other}"),
+        }
+    }
+
+    assert!(saw_node_result, "expected the persisted node_result replay");
+    assert!(saw_final, "expected an immediate final event");
+
+    let _ = socket.close(None).await;
+}

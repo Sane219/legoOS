@@ -23,6 +23,7 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 uuid = { version = "1.24.0", features = ["v4", "serde"] }
 redis = { version = "1.5.0", features = ["tokio-comp", "streams", "connection-manager"] }
 futures-util = "0.3.33"
+url = "2.5.8"
 
 [dev-dependencies]
 http-body-util = "0.1.4"

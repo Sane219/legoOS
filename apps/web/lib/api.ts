@@ -60,6 +60,23 @@ export interface ExecutionResult {
   nodes: ExecutionNodeResult[];
 }
 
+export interface ExecutionTraceNodeEvent {
+  type: "node_result";
+  node_id: string;
+  status: string;
+  output: unknown;
+  error: string | null;
+}
+
+export interface ExecutionTraceFinalEvent {
+  type: "final";
+  status: string;
+}
+
+export type ExecutionTraceEvent =
+  | ExecutionTraceNodeEvent
+  | ExecutionTraceFinalEvent;
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -189,5 +206,21 @@ export function runWorkflow(
     `/api/workspaces/${workspaceId}/workflows/${workflowId}/executions`,
     token,
     { method: "POST" },
+  );
+}
+
+/**
+ * Opens the live trace WebSocket for a run. The token travels as a query param, not a
+ * header, because browsers don't allow custom headers on a WS handshake.
+ */
+export function openExecutionTrace(
+  token: string,
+  workspaceId: string,
+  workflowId: string,
+  executionId: string,
+): WebSocket {
+  const wsUrl = API_URL.replace(/^http/, "ws");
+  return new WebSocket(
+    `${wsUrl}/api/workspaces/${workspaceId}/workflows/${workflowId}/executions/${executionId}/trace?token=${encodeURIComponent(token)}`,
   );
 }

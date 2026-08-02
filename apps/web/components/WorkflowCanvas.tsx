@@ -14,8 +14,12 @@ import {
   type NodeMouseHandler,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useCallback, useMemo, useState } from "react";
-import type { ExecutionResult, WorkflowGraph } from "@/lib/api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type {
+  ExecutionResult,
+  ExecutionTraceEvent,
+  WorkflowGraph,
+} from "@/lib/api";
 import {
   toCanvasEdges,
   toCanvasNodes,
@@ -29,6 +33,7 @@ interface WorkflowCanvasProps {
   graph: WorkflowGraph;
   onSave: (nodes: CanvasNode[], edges: CanvasEdge[]) => Promise<void>;
   onRun: () => Promise<ExecutionResult>;
+  onSubscribeTrace: (executionId: string) => WebSocket;
 }
 
 // Spaced wider than a default node (~300px) so newly added nodes don't overlap each other.
@@ -39,7 +44,12 @@ function nextPosition(count: number) {
   };
 }
 
-function CanvasInner({ graph, onSave, onRun }: WorkflowCanvasProps) {
+function CanvasInner({
+  graph,
+  onSave,
+  onRun,
+  onSubscribeTrace,
+}: WorkflowCanvasProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState(
     toCanvasNodes(graph.nodes),
   );
@@ -54,6 +64,12 @@ function CanvasInner({ graph, onSave, onRun }: WorkflowCanvasProps) {
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<ExecutionResult | null>(null);
+  const traceSocketRef = useRef<WebSocket | null>(null);
+
+  // Close any in-flight trace socket if the user navigates away mid-run.
+  useEffect(() => {
+    return () => traceSocketRef.current?.close();
+  }, []);
 
   const selectedNode = useMemo(
     () => nodes.find((n) => n.id === selectedNodeId) ?? null,
@@ -158,13 +174,54 @@ function CanvasInner({ graph, onSave, onRun }: WorkflowCanvasProps) {
     }
   }
 
+  function applyTraceEvent(event: ExecutionTraceEvent) {
+    setResult((current) => {
+      if (!current) return current;
+      if (event.type === "final") {
+        return { ...current, status: event.status };
+      }
+      const nodeResult = {
+        node_id: event.node_id,
+        status: event.status,
+        output: event.output,
+        error: event.error,
+      };
+      const existingIndex = current.nodes.findIndex(
+        (n) => n.node_id === event.node_id,
+      );
+      const nodes =
+        existingIndex === -1
+          ? [...current.nodes, nodeResult]
+          : current.nodes.map((n, i) => (i === existingIndex ? nodeResult : n));
+      return { ...current, nodes };
+    });
+  }
+
   async function handleRun() {
     setRunning(true);
     setResult(null);
+    traceSocketRef.current?.close();
+
     try {
       const execution = await onRun();
-      setResult(execution);
+      setResult({ ...execution, status: "running" });
+
+      await new Promise<void>((resolve) => {
+        const socket = onSubscribeTrace(execution.id);
+        traceSocketRef.current = socket;
+
+        socket.onmessage = (message: MessageEvent<string>) => {
+          const event: ExecutionTraceEvent = JSON.parse(message.data);
+          applyTraceEvent(event);
+          if (event.type === "final") {
+            socket.close();
+          }
+        };
+        socket.onclose = () => resolve();
+        socket.onerror = () => resolve();
+      });
     } finally {
+      traceSocketRef.current = null;
       setRunning(false);
     }
   }

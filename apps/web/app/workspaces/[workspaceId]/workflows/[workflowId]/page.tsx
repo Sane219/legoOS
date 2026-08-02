@@ -4,7 +4,13 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { WorkflowCanvas } from "@/components/WorkflowCanvas";
-import { getWorkflow, runWorkflow, saveGraph, type WorkflowGraph } from "@/lib/api";
+import {
+  getWorkflow,
+  openExecutionTrace,
+  runWorkflow,
+  saveGraph,
+  type WorkflowGraph,
+} from "@/lib/api";
 import { getToken } from "@/lib/auth";
 import { toBackendGraph, type CanvasEdge, type CanvasNode } from "@/lib/workflow-graph";
 
@@ -51,6 +57,19 @@ export default function WorkflowCanvasPage() {
     return runWorkflow(token, params.workspaceId, params.workflowId);
   }, [token, params.workspaceId, params.workflowId]);
 
+  const handleSubscribeTrace = useCallback(
+    (executionId: string) => {
+      if (!token) throw new Error("not authenticated");
+      return openExecutionTrace(
+        token,
+        params.workspaceId,
+        params.workflowId,
+        executionId,
+      );
+    },
+    [token, params.workspaceId, params.workflowId],
+  );
+
   if (error) {
     return (
       <main className="flex flex-1 items-center justify-center px-6">
@@ -78,7 +97,12 @@ export default function WorkflowCanvasPage() {
         </Link>
         <h1 className="text-sm font-semibold">{graph.name}</h1>
       </div>
-      <WorkflowCanvas graph={graph} onSave={handleSave} onRun={handleRun} />
+      <WorkflowCanvas
+        graph={graph}
+        onSave={handleSave}
+        onRun={handleRun}
+        onSubscribeTrace={handleSubscribeTrace}
+      />
     </div>
   );
 }

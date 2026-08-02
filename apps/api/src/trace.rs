@@ -10,8 +10,8 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::{
-    auth_extractor::AuthUser, error::AppError, state::AppState, workflows::ensure_workflow_exists,
-    workspaces::member_role,
+    auth_extractor::WsAuthUser, error::AppError, state::AppState,
+    workflows::ensure_workflow_exists, workspaces::member_role,
 };
 
 /// Streams `queue::TraceEvent`s for one execution as JSON text frames: first a replay of
@@ -20,7 +20,7 @@ use crate::{
 /// or immediately a `Final` if the execution had already finished.
 pub async fn execution_trace(
     State(state): State<AppState>,
-    AuthUser(user_id): AuthUser,
+    WsAuthUser(user_id): WsAuthUser,
     Path((workspace_id, workflow_id, execution_id)): Path<(Uuid, Uuid, Uuid)>,
     ws: WebSocketUpgrade,
 ) -> Result<impl IntoResponse, AppError> {

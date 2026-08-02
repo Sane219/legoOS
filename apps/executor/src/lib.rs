@@ -1,7 +1,16 @@
-use llm::{ChatMessage, CompletionRequest, LlmProvider};
+use llm::{ChatMessage, CompletionRequest, EmbeddingProvider, LlmProvider};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
 use uuid::Uuid;
+
+/// What a `rag` node needs to search a workspace's knowledge base — bundled since none of
+/// it is meaningful on its own (a client with no embedding provider, or vice versa, can't
+/// actually run a search).
+pub struct RagContext<'a> {
+    pub client: &'a rag::RagClient,
+    pub embedding_provider: &'a dyn EmbeddingProvider,
+    pub workspace_id: Uuid,
+}
 
 #[derive(Debug, Clone)]
 pub struct Node {
@@ -92,6 +101,7 @@ pub async fn execute(
     provider: Option<&dyn LlmProvider>,
     events: Option<&EventSender>,
     resume: Option<&ResumeState>,
+    rag: Option<&RagContext<'_>>,
 ) -> ExecutionResult {
     let node_map: HashMap<Uuid, &Node> = nodes.iter().map(|n| (n.id, n)).collect();
 
@@ -234,7 +244,7 @@ pub async fn execute(
             continue;
         }
 
-        match run_node(node, &inputs, provider).await {
+        match run_node(node, &inputs, provider, rag).await {
             Ok(output) => {
                 propagate(
                     node_id,
@@ -427,9 +437,55 @@ async fn run_node(
     node: &Node,
     inputs: &[Value],
     provider: Option<&dyn LlmProvider>,
+    rag: Option<&RagContext<'_>>,
 ) -> Result<Value, String> {
     match node.node_type.as_str() {
         "input" => Ok(node.config.get("value").cloned().unwrap_or(Value::Null)),
+
+        "rag" => {
+            let rag = rag.ok_or_else(|| {
+                "no RAG context configured (Qdrant/embedding provider unavailable)".to_string()
+            })?;
+
+            let query_template = node
+                .config
+                .get("query")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "rag node missing \"query\" in config".to_string())?;
+            let limit = node
+                .config
+                .get("limit")
+                .and_then(Value::as_u64)
+                .unwrap_or(5);
+
+            let context = merge_inputs(inputs);
+            let query = render_template(query_template, &context);
+
+            let vector = rag
+                .embedding_provider
+                .embed(&query)
+                .await
+                .map_err(|e| format!("rag node embedding failed: {e}"))?;
+            let hits = rag
+                .client
+                .search(rag.workspace_id, vector, limit)
+                .await
+                .map_err(|e| format!("rag node search failed: {e}"))?;
+
+            let chunks: Vec<Value> = hits
+                .into_iter()
+                .map(|hit| {
+                    serde_json::json!({
+                        "text": hit.text,
+                        "document_id": hit.document_id,
+                        "chunk_index": hit.chunk_index,
+                        "score": hit.score,
+                    })
+                })
+                .collect();
+
+            Ok(serde_json::json!({ "chunks": chunks }))
+        }
 
         "transform" => {
             let base = merge_inputs(inputs);
@@ -581,7 +637,7 @@ mod tests {
         ];
         let edges = vec![edge(a, b, None), edge(b, c, None)];
 
-        let result = execute(&nodes, &edges, None, None, None).await;
+        let result = execute(&nodes, &edges, None, None, None, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Succeeded);
         assert_eq!(
@@ -625,7 +681,7 @@ mod tests {
             edge(cond, on_false, Some("false")),
         ];
 
-        let result = execute(&nodes, &edges, None, None, None).await;
+        let result = execute(&nodes, &edges, None, None, None, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Succeeded);
         assert_eq!(status_of(&result, on_true), NodeStatus::Succeeded);
@@ -659,7 +715,7 @@ mod tests {
             edge(cond, on_false, Some("false")),
         ];
 
-        let result = execute(&nodes, &edges, None, None, None).await;
+        let result = execute(&nodes, &edges, None, None, None, None).await;
 
         assert_eq!(status_of(&result, on_true), NodeStatus::Skipped);
         assert_eq!(status_of(&result, on_false), NodeStatus::Succeeded);
@@ -680,7 +736,7 @@ mod tests {
         ];
         let edges = vec![edge(input, cond, None)];
 
-        let result = execute(&nodes, &edges, None, None, None).await;
+        let result = execute(&nodes, &edges, None, None, None, None).await;
 
         assert_eq!(
             *output_of(&result, cond),
@@ -701,7 +757,7 @@ mod tests {
         ];
         let edges = vec![edge(a, join, None), edge(b, join, None)];
 
-        let result = execute(&nodes, &edges, None, None, None).await;
+        let result = execute(&nodes, &edges, None, None, None, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Succeeded);
         let output = output_of(&result, join);
@@ -713,7 +769,7 @@ mod tests {
     async fn unknown_node_type_fails() {
         let a = Uuid::new_v4();
         let nodes = vec![node(a, "bogus", Value::Null)];
-        let result = execute(&nodes, &[], None, None, None).await;
+        let result = execute(&nodes, &[], None, None, None, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Failed);
         assert_eq!(status_of(&result, a), NodeStatus::Failed);
@@ -730,7 +786,7 @@ mod tests {
         ];
         let edges = vec![edge(a, b, None)];
 
-        let result = execute(&nodes, &edges, None, None, None).await;
+        let result = execute(&nodes, &edges, None, None, None, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Failed);
         assert_eq!(status_of(&result, a), NodeStatus::Failed);
@@ -748,7 +804,7 @@ mod tests {
         ];
         let edges = vec![edge(a, b, None), edge(b, a, None)];
 
-        let result = execute(&nodes, &edges, None, None, None).await;
+        let result = execute(&nodes, &edges, None, None, None, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Failed);
         assert_eq!(status_of(&result, a), NodeStatus::Failed);
@@ -774,7 +830,7 @@ mod tests {
         ];
         let edges = vec![edge(input, agent, None)];
 
-        let result = execute(&nodes, &edges, Some(&EchoProvider), None, None).await;
+        let result = execute(&nodes, &edges, Some(&EchoProvider), None, None, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Succeeded);
         assert_eq!(
@@ -792,7 +848,7 @@ mod tests {
             serde_json::json!({ "prompt": "hi", "model": "test-model" }),
         )];
 
-        let result = execute(&nodes, &[], None, None, None).await;
+        let result = execute(&nodes, &[], None, None, None, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Failed);
         assert_eq!(status_of(&result, a), NodeStatus::Failed);
@@ -815,7 +871,7 @@ mod tests {
         ];
         let edges = vec![edge(input, gate, None), edge(gate, downstream, None)];
 
-        let result = execute(&nodes, &edges, None, None, None).await;
+        let result = execute(&nodes, &edges, None, None, None, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Waiting);
         assert_eq!(status_of(&result, gate), NodeStatus::Waiting);
@@ -840,7 +896,7 @@ mod tests {
         ];
         let edges = vec![edge(input, gate, None), edge(gate, downstream, None)];
 
-        let first = execute(&nodes, &edges, None, None, None).await;
+        let first = execute(&nodes, &edges, None, None, None, None).await;
         let seed_results = first.nodes.clone();
 
         let mut approval_decisions = HashMap::new();
@@ -850,7 +906,7 @@ mod tests {
             approval_decisions,
         };
 
-        let second = execute(&nodes, &edges, None, None, Some(&resume)).await;
+        let second = execute(&nodes, &edges, None, None, Some(&resume), None).await;
 
         assert_eq!(second.status, ExecutionStatus::Succeeded);
         assert_eq!(status_of(&second, gate), NodeStatus::Succeeded);
@@ -874,7 +930,7 @@ mod tests {
         ];
         let edges = vec![edge(input, gate, None), edge(gate, downstream, None)];
 
-        let first = execute(&nodes, &edges, None, None, None).await;
+        let first = execute(&nodes, &edges, None, None, None, None).await;
 
         let mut approval_decisions = HashMap::new();
         approval_decisions.insert(gate, false);
@@ -883,7 +939,7 @@ mod tests {
             approval_decisions,
         };
 
-        let second = execute(&nodes, &edges, None, None, Some(&resume)).await;
+        let second = execute(&nodes, &edges, None, None, Some(&resume), None).await;
 
         assert_eq!(second.status, ExecutionStatus::Failed);
         assert_eq!(status_of(&second, gate), NodeStatus::Failed);
@@ -919,7 +975,7 @@ mod tests {
         ];
         let edges = vec![edge(agent, gate, None)];
 
-        let first = execute(&nodes, &edges, Some(&EchoProvider), None, None).await;
+        let first = execute(&nodes, &edges, Some(&EchoProvider), None, None, None).await;
         assert_eq!(status_of(&first, agent), NodeStatus::Succeeded);
 
         let mut approval_decisions = HashMap::new();
@@ -929,7 +985,15 @@ mod tests {
             approval_decisions,
         };
 
-        let second = execute(&nodes, &edges, Some(&FailingProvider), None, Some(&resume)).await;
+        let second = execute(
+            &nodes,
+            &edges,
+            Some(&FailingProvider),
+            None,
+            Some(&resume),
+            None,
+        )
+        .await;
 
         assert_eq!(second.status, ExecutionStatus::Succeeded);
         assert_eq!(status_of(&second, agent), NodeStatus::Succeeded);

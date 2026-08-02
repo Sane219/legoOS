@@ -125,9 +125,19 @@ pub async fn run_execution_inline(pool: &PgPool, execution_id: Uuid, workflow_id
         execution_id,
         workflow_id,
     };
-    worker::run_job(pool, &mut redis, &job, None, MCP_CREDENTIAL_KEY)
-        .await
-        .expect("worker::run_job failed");
+    let rag_client = rag::RagClient::connect(&qdrant_url()).expect("invalid QDRANT_URL");
+    let embedding_provider: Arc<dyn llm::EmbeddingProvider> = Arc::new(FakeEmbeddingProvider);
+    worker::run_job(
+        pool,
+        &mut redis,
+        &job,
+        None,
+        MCP_CREDENTIAL_KEY,
+        Some(&rag_client),
+        Some(&embedding_provider),
+    )
+    .await
+    .expect("worker::run_job failed");
 }
 
 /// Creates a workspace owned by `token`'s user and returns its id.

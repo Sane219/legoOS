@@ -148,9 +148,17 @@ async fn resolves_saved_connection_and_calls_its_tool(pool: PgPool) {
         execution_id,
         workflow_id,
     };
-    worker::run_job(&pool, &mut redis, &job, Some(&provider), MCP_CREDENTIAL_KEY)
-        .await
-        .unwrap();
+    worker::run_job(
+        &pool,
+        &mut redis,
+        &job,
+        Some(&provider),
+        MCP_CREDENTIAL_KEY,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     ct.cancel();
     server_handle.abort();

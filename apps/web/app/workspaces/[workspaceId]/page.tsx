@@ -75,6 +75,12 @@ export default function WorkspacePage() {
           >
             MCP connections &rarr;
           </Link>
+          <Link
+            href={`/workspaces/${params.workspaceId}/documents`}
+            className="text-sm text-zinc-500 hover:underline"
+          >
+            Documents &rarr;
+          </Link>
         </div>
       </div>
 

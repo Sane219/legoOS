@@ -23,6 +23,8 @@ async fn main() -> anyhow::Result<()> {
     if mcp_credential_key.len() != 64 {
         anyhow::bail!("MCP_CREDENTIAL_KEY must be 64 hex characters (32 bytes)");
     }
+    let qdrant_url =
+        std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://127.0.0.1:6334".to_string());
 
     let pool = PgPoolOptions::new()
         .max_connections(5)
@@ -45,6 +47,17 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    let rag_client = rag::RagClient::connect(&qdrant_url).context("invalid QDRANT_URL")?;
+
+    let embedding_provider: Option<Arc<dyn llm::EmbeddingProvider>> =
+        match llm::embedding_provider_from_env() {
+            Ok(p) => Some(Arc::from(p)),
+            Err(e) => {
+                tracing::warn!(error = %e, "no embedding provider configured; rag nodes will fail");
+                None
+            }
+        };
+
     let consumer = format!("worker-{}", std::process::id());
     tracing::info!(consumer = %consumer, "worker started, waiting for workflow runs");
 
@@ -54,28 +67,59 @@ async fn main() -> anyhow::Result<()> {
                 tracing::info!("worker shutting down");
                 break;
             }
-            _ = tick(&pool, &mut redis, &consumer, provider.as_ref(), &mcp_credential_key) => {}
+            _ = tick(
+                &pool,
+                &mut redis,
+                &consumer,
+                provider.as_ref(),
+                &mcp_credential_key,
+                &rag_client,
+                embedding_provider.as_ref(),
+            ) => {}
         }
     }
 
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn tick(
     pool: &PgPool,
     redis: &mut ConnectionManager,
     consumer: &str,
     provider: Option<&Arc<dyn llm::LlmProvider>>,
     mcp_credential_key: &str,
+    rag_client: &rag::RagClient,
+    embedding_provider: Option<&Arc<dyn llm::EmbeddingProvider>>,
 ) {
-    if let Err(e) = reclaim_stuck(pool, redis, consumer, provider, mcp_credential_key).await {
+    if let Err(e) = reclaim_stuck(
+        pool,
+        redis,
+        consumer,
+        provider,
+        mcp_credential_key,
+        Some(rag_client),
+        embedding_provider,
+    )
+    .await
+    {
         tracing::warn!(error = %e, "reclaim pass failed");
     }
 
     match read_new(redis, consumer, 2000).await {
         Ok(entries) => {
             for (entry_id, job) in entries {
-                process_entry(pool, redis, &entry_id, job, provider, mcp_credential_key).await;
+                process_entry(
+                    pool,
+                    redis,
+                    &entry_id,
+                    job,
+                    provider,
+                    mcp_credential_key,
+                    Some(rag_client),
+                    embedding_provider,
+                )
+                .await;
             }
         }
         Err(e) => {

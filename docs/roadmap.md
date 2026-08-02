@@ -38,7 +38,7 @@ file up to date — see [CLAUDE.md](../CLAUDE.md) rules.
 - [x] Implement document upload and storage for knowledge bases
 - [x] Implement document chunking and embedding generation pipeline
 - [x] Integrate Qdrant for embedding storage and similarity search
-- [ ] Implement the RAG node type (retrieve relevant chunks, inject into agent context)
+- [x] Implement the RAG node type (retrieve relevant chunks, inject into agent context)
 - [ ] Design and implement the long-term memory data model (per-agent, per-workspace)
 - [ ] Implement memory write (persist relevant facts/results after a run)
 - [ ] Implement memory retrieval (surface relevant memory into a new run's context)

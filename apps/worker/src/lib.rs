@@ -65,12 +65,15 @@ pub async fn read_new(
 /// Reclaims entries some worker read but never acked, long enough ago that it's assumed
 /// dead. Entries reclaimed past `MAX_DELIVERIES` are routed to the dead-letter stream
 /// instead of being retried forever.
+#[allow(clippy::too_many_arguments)]
 pub async fn reclaim_stuck(
     pool: &PgPool,
     conn: &mut ConnectionManager,
     consumer: &str,
     provider: Option<&Arc<dyn llm::LlmProvider>>,
     mcp_credential_key: &str,
+    rag_client: Option<&rag::RagClient>,
+    embedding_provider: Option<&Arc<dyn llm::EmbeddingProvider>>,
 ) -> anyhow::Result<()> {
     let pending: StreamPendingCountReply = conn
         .xpending_count(WORKFLOW_RUNS_STREAM, WORKFLOW_RUNS_GROUP, "-", "+", 50)
@@ -107,6 +110,8 @@ pub async fn reclaim_stuck(
                         job,
                         provider,
                         mcp_credential_key,
+                        rag_client,
+                        embedding_provider,
                     )
                     .await
                 }
@@ -147,6 +152,7 @@ async fn dead_letter(conn: &mut ConnectionManager, entry_id: &str) -> anyhow::Re
 /// Runs `job` to completion and acks its stream entry regardless of outcome: a workflow
 /// that fails at the node level is a normal, fully-recorded execution, not a reason to
 /// retry. Only an infrastructure error (DB/redis) surfaces here for the caller to log.
+#[allow(clippy::too_many_arguments)]
 pub async fn process_entry(
     pool: &PgPool,
     redis: &mut ConnectionManager,
@@ -154,9 +160,21 @@ pub async fn process_entry(
     job: RunJob,
     provider: Option<&Arc<dyn llm::LlmProvider>>,
     mcp_credential_key: &str,
+    rag_client: Option<&rag::RagClient>,
+    embedding_provider: Option<&Arc<dyn llm::EmbeddingProvider>>,
 ) {
     tracing::info!(execution_id = %job.execution_id, "processing workflow run");
-    if let Err(e) = run_job(pool, redis, &job, provider, mcp_credential_key).await {
+    if let Err(e) = run_job(
+        pool,
+        redis,
+        &job,
+        provider,
+        mcp_credential_key,
+        rag_client,
+        embedding_provider,
+    )
+    .await
+    {
         tracing::error!(execution_id = %job.execution_id, error = %e, "workflow run failed");
     }
     let _: redis::RedisResult<()> = redis
@@ -289,12 +307,15 @@ async fn load_resume_state(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_job(
     pool: &PgPool,
     redis: &mut ConnectionManager,
     job: &RunJob,
     provider: Option<&Arc<dyn llm::LlmProvider>>,
     mcp_credential_key: &str,
+    rag_client: Option<&rag::RagClient>,
+    embedding_provider: Option<&Arc<dyn llm::EmbeddingProvider>>,
 ) -> anyhow::Result<()> {
     sqlx::query("UPDATE workflow_executions SET status = 'running' WHERE id = $1")
         .bind(job.execution_id)
@@ -354,8 +375,23 @@ pub async fn run_job(
     });
 
     let provider_ref = provider.map(Arc::as_ref);
-    let result =
-        executor::execute(&nodes, &edges, provider_ref, Some(&tx), Some(&resume_state)).await;
+    let rag_context = match (rag_client, embedding_provider) {
+        (Some(client), Some(embedding_provider)) => Some(executor::RagContext {
+            client,
+            embedding_provider: embedding_provider.as_ref(),
+            workspace_id,
+        }),
+        _ => None,
+    };
+    let result = executor::execute(
+        &nodes,
+        &edges,
+        provider_ref,
+        Some(&tx),
+        Some(&resume_state),
+        rag_context.as_ref(),
+    )
+    .await;
     drop(tx);
     let _ = publisher.await;
 

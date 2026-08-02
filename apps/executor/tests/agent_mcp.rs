@@ -97,7 +97,7 @@ async fn agent_node_calls_mcp_tool_and_renders_result_into_prompt() {
     }];
     let edges: Vec<Edge> = vec![];
 
-    let result = execute(&nodes, &edges, Some(&EchoProvider), None, None).await;
+    let result = execute(&nodes, &edges, Some(&EchoProvider), None, None, None).await;
 
     ct.cancel();
     server_handle.abort();

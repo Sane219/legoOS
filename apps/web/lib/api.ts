@@ -90,6 +90,14 @@ export interface McpTool {
   description: string | null;
 }
 
+export interface Document {
+  id: string;
+  name: string;
+  status: string;
+  error: string | null;
+  created_at: string;
+}
+
 export interface ApprovalGate {
   id: string;
   execution_id: string;
@@ -272,6 +280,36 @@ export function testMcpConnection(
     `/api/workspaces/${workspaceId}/mcp-connections/${connectionId}/test`,
     token,
     { method: "POST" },
+  );
+}
+
+export function listDocuments(
+  token: string,
+  workspaceId: string,
+): Promise<Document[]> {
+  return authedRequest(`/api/workspaces/${workspaceId}/documents`, token);
+}
+
+export function createDocument(
+  token: string,
+  workspaceId: string,
+  document: { name: string; content: string },
+): Promise<Document> {
+  return authedRequest(`/api/workspaces/${workspaceId}/documents`, token, {
+    method: "POST",
+    body: JSON.stringify(document),
+  });
+}
+
+export function deleteDocument(
+  token: string,
+  workspaceId: string,
+  documentId: string,
+): Promise<{ deleted: true }> {
+  return authedRequest(
+    `/api/workspaces/${workspaceId}/documents/${documentId}`,
+    token,
+    { method: "DELETE" },
   );
 }
 

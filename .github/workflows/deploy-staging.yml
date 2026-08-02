@@ -1,15 +1,17 @@
 name: Deploy staging
 
-# Runs after CI is green on main, or manually. Building + pushing images always runs (it only
-# needs the repo's own GITHUB_TOKEN, for GHCR). The actual `helm upgrade` step is gated behind
-# a `STAGING_KUBECONFIG` repo secret — until that's configured, this workflow builds and
-# publishes images but does not attempt to deploy anywhere. See deploy/terraform + deploy/helm
-# for what would need to exist first (a real cluster) before that secret means anything.
+# Manual only (workflow_dispatch), deliberately — this pushes real images to the repo's GHCR
+# under the repo owner's account, which is a visible-to-others side effect that shouldn't
+# happen automatically until someone decides staging should actually go live. Switch the
+# trigger to `workflow_run: {workflows: [CI], branches: [main], types: [completed]}` once
+# that's a decision you've made, not a default this file should make for you.
+#
+# Building + pushing images only needs the repo's own GITHUB_TOKEN, for GHCR. The actual
+# `helm upgrade` step is gated behind a `STAGING_KUBECONFIG` repo secret — until that's
+# configured, this workflow builds and publishes images but does not attempt to deploy
+# anywhere. See deploy/terraform + deploy/helm for what would need to exist first (a real
+# cluster) before that secret means anything.
 on:
-  workflow_run:
-    workflows: [CI]
-    branches: [main]
-    types: [completed]
   workflow_dispatch: {}
 
 env:
@@ -18,7 +20,6 @@ env:
 
 jobs:
   build-and-push:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -44,13 +44,15 @@ helm install legoos deploy/helm/legoos -f my-values.yaml
 ## Staging via CI/CD
 
 `.github/workflows/deploy-staging.yml` builds and pushes `api`/`worker`/`web` images to GHCR
-(`ghcr.io/<owner>/legoos-<service>:<sha>`) on every successful `main` CI run (or manually via
-`workflow_dispatch`) — that part needs nothing beyond the repo's own `GITHUB_TOKEN` and
-always runs. The `deploy` job then runs `helm upgrade --install` with `-f values-staging.yaml`
-and `--set *.image.tag=<sha>`, but only if a `STAGING_KUBECONFIG` repo secret (base64-encoded
-kubeconfig) is set — until a real staging cluster exists (`deploy/terraform`, then this
-chart), that secret is absent and the job logs why and stops rather than failing loudly or
-pretending to deploy. Add the secret once a cluster is up to make it real.
+(`ghcr.io/<owner>/legoos-<service>:<sha>`) — trigger is `workflow_dispatch` only (deliberately
+not automatic on every `main` push, since publishing images to the repo's GHCR is a
+visible-to-others side effect that should be a decision, not a default; flip it to a
+`workflow_run: {workflows: [CI], ...}` trigger yourself once you want that). The `deploy` job
+then runs `helm upgrade --install` with `-f values-staging.yaml` and `--set *.image.tag=<sha>`,
+but only if a `STAGING_KUBECONFIG` repo secret (base64-encoded kubeconfig) is set — until a
+real staging cluster exists (`deploy/terraform`, then this chart), that secret is absent and
+the job logs why and stops rather than failing loudly or pretending to deploy. Add the secret
+once a cluster is up to make it real.
 
 ## Not verified — read before trusting this chart
 

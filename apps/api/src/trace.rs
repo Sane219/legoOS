@@ -41,8 +41,23 @@ pub async fn execution_trace(
         return Err(AppError::NotFound("execution not found".into()));
     }
 
+    // Subscribed here, before the WS upgrade response is sent, so the SUBSCRIBE has
+    // completed against Redis before the client can possibly enqueue/observe work that
+    // publishes to this channel — subscribing only after on_upgrade (i.e. after the
+    // client already sees 101 Switching Protocols) loses events to that race.
+    let mut pubsub = state
+        .redis_client
+        .get_async_pubsub()
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+    pubsub
+        .subscribe(queue::trace_channel(execution_id))
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+    let stream = pubsub.into_on_message();
+
     Ok(ws.on_upgrade(move |socket| async move {
-        if let Err(e) = run_trace_socket(socket, state, execution_id).await {
+        if let Err(e) = run_trace_socket(socket, state, execution_id, stream).await {
             tracing::warn!(execution_id = %execution_id, error = %e, "trace socket ended with an error");
         }
     }))
@@ -52,13 +67,8 @@ async fn run_trace_socket(
     mut socket: WebSocket,
     state: AppState,
     execution_id: Uuid,
+    mut stream: redis::aio::PubSubStream,
 ) -> anyhow::Result<()> {
-    // Subscribe before reading any state, so a Final published between our subscribe and
-    // our snapshot query still lands in the stream instead of being missed entirely.
-    let mut pubsub = state.redis_client.get_async_pubsub().await?;
-    pubsub.subscribe(queue::trace_channel(execution_id)).await?;
-    let mut stream = pubsub.into_on_message();
-
     let existing_nodes = sqlx::query_as::<_, (Uuid, String, Option<Value>, Option<String>)>(
         "SELECT node_id, status, output, error FROM workflow_execution_nodes WHERE execution_id = $1",
     )

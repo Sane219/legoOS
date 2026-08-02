@@ -4,16 +4,25 @@ use axum::{
     http::{Request, StatusCode, header},
 };
 use http_body_util::BodyExt;
+use redis::aio::ConnectionManager;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower::ServiceExt;
 
 const JWT_SECRET: &str = "test-secret";
 
-fn app(pool: PgPool) -> axum::Router {
+async fn app(pool: PgPool) -> axum::Router {
+    let redis_url =
+        std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+    let client = redis::Client::open(redis_url.as_str()).expect("invalid REDIS_URL");
+    let redis = ConnectionManager::new(client)
+        .await
+        .expect("failed to connect to redis for tests");
+
     routes::build(AppState {
         pool,
         jwt_secret: JWT_SECRET.to_string(),
+        redis,
     })
 }
 
@@ -35,7 +44,7 @@ fn register_request(email: &str, password: &str) -> Request<Body> {
 
 #[sqlx::test]
 async fn register_succeeds(pool: PgPool) {
-    let app = app(pool);
+    let app = app(pool).await;
 
     let response = app
         .oneshot(register_request("alice@example.com", "hunter22"))
@@ -49,7 +58,7 @@ async fn register_succeeds(pool: PgPool) {
 
 #[sqlx::test]
 async fn register_duplicate_email_fails(pool: PgPool) {
-    let app = app(pool);
+    let app = app(pool).await;
 
     let first = app
         .clone()
@@ -67,7 +76,7 @@ async fn register_duplicate_email_fails(pool: PgPool) {
 
 #[sqlx::test]
 async fn login_succeeds(pool: PgPool) {
-    let app = app(pool);
+    let app = app(pool).await;
 
     app.clone()
         .oneshot(register_request("carol@example.com", "hunter22"))
@@ -95,7 +104,7 @@ async fn login_succeeds(pool: PgPool) {
 
 #[sqlx::test]
 async fn login_wrong_password_fails(pool: PgPool) {
-    let app = app(pool);
+    let app = app(pool).await;
 
     app.clone()
         .oneshot(register_request("dave@example.com", "hunter22"))
@@ -122,7 +131,7 @@ async fn login_wrong_password_fails(pool: PgPool) {
 
 #[sqlx::test]
 async fn me_with_valid_token_succeeds(pool: PgPool) {
-    let app = app(pool);
+    let app = app(pool).await;
 
     let register_response = app
         .clone()
@@ -153,7 +162,7 @@ async fn me_with_valid_token_succeeds(pool: PgPool) {
 
 #[sqlx::test]
 async fn me_without_token_returns_401(pool: PgPool) {
-    let app = app(pool);
+    let app = app(pool).await;
 
     let response = app
         .oneshot(

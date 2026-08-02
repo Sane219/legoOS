@@ -15,17 +15,21 @@ services:
       timeout: 5s
       retries: 10
 
-  # Provisioned ahead of the code that uses them: the queue (Phase 2) and RAG vector
-  # search (Phase 3). Not yet wired into api/executor/worker.
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-
+  # RAG vector search (Phase 3) will use this; not yet wired into api/executor/worker.
   qdrant:
     image: qdrant/qdrant:latest
     ports:
       - "6333:6333"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   api:
     build:
@@ -33,6 +37,7 @@ services:
       dockerfile: apps/api/Dockerfile
     environment:
       DATABASE_URL: postgres://legoos:legoos@postgres:5432/legoos
+      REDIS_URL: redis://redis:6379
       JWT_SECRET: dev-secret-change-me
       RUST_LOG: info
     ports:
@@ -40,6 +45,28 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    environment:
+      DATABASE_URL: postgres://legoos:legoos@postgres:5432/legoos
+      REDIS_URL: redis://redis:6379
+      # LLM_PROVIDER: anthropic | ollama (defaults to anthropic; see apps/llm)
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      RUST_LOG: info
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
 
   web:
     build:

@@ -6,11 +6,14 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use common::{app, authed_json_request, authed_request, create_workspace, json_body, register};
+use common::{
+    app, authed_json_request, authed_request, create_workspace, json_body, register,
+    run_execution_inline,
+};
 
 #[sqlx::test]
 async fn create_workflow_succeeds(pool: PgPool) {
-    let app = app(pool);
+    let app = app(pool).await;
     let token = register(app.clone(), "owner@example.com", "hunter22").await;
     let workspace_id = create_workspace(app.clone(), &token, "Acme").await;
 
@@ -31,7 +34,7 @@ async fn create_workflow_succeeds(pool: PgPool) {
 
 #[sqlx::test]
 async fn create_workflow_404_for_non_member(pool: PgPool) {
-    let app = app(pool);
+    let app = app(pool).await;
     let owner_token = register(app.clone(), "owner@example.com", "hunter22").await;
     let stranger_token = register(app.clone(), "stranger@example.com", "hunter22").await;
     let workspace_id = create_workspace(app.clone(), &owner_token, "Acme").await;
@@ -51,7 +54,7 @@ async fn create_workflow_404_for_non_member(pool: PgPool) {
 
 #[sqlx::test]
 async fn list_workflows_is_scoped_to_workspace(pool: PgPool) {
-    let app = app(pool);
+    let app = app(pool).await;
     let token = register(app.clone(), "owner@example.com", "hunter22").await;
     let workspace_a = create_workspace(app.clone(), &token, "Workspace A").await;
     let workspace_b = create_workspace(app.clone(), &token, "Workspace B").await;
@@ -108,7 +111,7 @@ async fn create_workflow_id(app: axum::Router, token: &str, workspace_id: &str) 
 
 #[sqlx::test]
 async fn save_graph_then_get_returns_nodes_and_edges(pool: PgPool) {
-    let app = app(pool);
+    let app = app(pool).await;
     let token = register(app.clone(), "owner@example.com", "hunter22").await;
     let workspace_id = create_workspace(app.clone(), &token, "Acme").await;
     let workflow_id = create_workflow_id(app.clone(), &token, &workspace_id).await;
@@ -153,7 +156,7 @@ async fn save_graph_then_get_returns_nodes_and_edges(pool: PgPool) {
 
 #[sqlx::test]
 async fn save_graph_replaces_previous_graph(pool: PgPool) {
-    let app = app(pool);
+    let app = app(pool).await;
     let token = register(app.clone(), "owner@example.com", "hunter22").await;
     let workspace_id = create_workspace(app.clone(), &token, "Acme").await;
     let workflow_id = create_workflow_id(app.clone(), &token, &workspace_id).await;
@@ -202,7 +205,7 @@ async fn save_graph_replaces_previous_graph(pool: PgPool) {
 
 #[sqlx::test]
 async fn run_workflow_executes_linear_chain(pool: PgPool) {
-    let app = app(pool);
+    let app = app(pool.clone()).await;
     let token = register(app.clone(), "owner@example.com", "hunter22").await;
     let workspace_id = create_workspace(app.clone(), &token, "Acme").await;
     let workflow_id = create_workflow_id(app.clone(), &token, &workspace_id).await;
@@ -229,6 +232,7 @@ async fn run_workflow_executes_linear_chain(pool: PgPool) {
         .unwrap();
 
     let run_response = app
+        .clone()
         .oneshot(authed_request(
             "POST",
             &format!("/api/workspaces/{workspace_id}/workflows/{workflow_id}/executions"),
@@ -239,6 +243,24 @@ async fn run_workflow_executes_linear_chain(pool: PgPool) {
 
     assert_eq!(run_response.status(), StatusCode::OK);
     let body = json_body(run_response).await;
+    assert_eq!(body["status"], "pending");
+    assert!(body["nodes"].as_array().unwrap().is_empty());
+
+    let execution_id = Uuid::parse_str(body["id"].as_str().unwrap()).unwrap();
+    let workflow_uuid = Uuid::parse_str(&workflow_id).unwrap();
+    run_execution_inline(&pool, execution_id, workflow_uuid).await;
+
+    let get_response = app
+        .oneshot(authed_request(
+            "GET",
+            &format!(
+                "/api/workspaces/{workspace_id}/workflows/{workflow_id}/executions/{execution_id}"
+            ),
+            &token,
+        ))
+        .await
+        .unwrap();
+    let body = json_body(get_response).await;
     assert_eq!(body["status"], "succeeded");
 
     let nodes = body["nodes"].as_array().unwrap();
@@ -253,7 +275,7 @@ async fn run_workflow_executes_linear_chain(pool: PgPool) {
 
 #[sqlx::test]
 async fn run_workflow_records_branch_skip(pool: PgPool) {
-    let app = app(pool);
+    let app = app(pool.clone()).await;
     let token = register(app.clone(), "owner@example.com", "hunter22").await;
     let workspace_id = create_workspace(app.clone(), &token, "Acme").await;
     let workflow_id = create_workflow_id(app.clone(), &token, &workspace_id).await;
@@ -286,6 +308,7 @@ async fn run_workflow_records_branch_skip(pool: PgPool) {
         .unwrap();
 
     let run_response = app
+        .clone()
         .oneshot(authed_request(
             "POST",
             &format!("/api/workspaces/{workspace_id}/workflows/{workflow_id}/executions"),
@@ -294,7 +317,22 @@ async fn run_workflow_records_branch_skip(pool: PgPool) {
         .await
         .unwrap();
 
-    let body = json_body(run_response).await;
+    let run_body = json_body(run_response).await;
+    let execution_id = Uuid::parse_str(run_body["id"].as_str().unwrap()).unwrap();
+    let workflow_uuid = Uuid::parse_str(&workflow_id).unwrap();
+    run_execution_inline(&pool, execution_id, workflow_uuid).await;
+
+    let get_response = app
+        .oneshot(authed_request(
+            "GET",
+            &format!(
+                "/api/workspaces/{workspace_id}/workflows/{workflow_id}/executions/{execution_id}"
+            ),
+            &token,
+        ))
+        .await
+        .unwrap();
+    let body = json_body(get_response).await;
     assert_eq!(body["status"], "succeeded");
     let nodes = body["nodes"].as_array().unwrap();
 
@@ -312,7 +350,7 @@ async fn run_workflow_records_branch_skip(pool: PgPool) {
 
 #[sqlx::test]
 async fn get_execution_returns_persisted_result(pool: PgPool) {
-    let app = app(pool);
+    let app = app(pool.clone()).await;
     let token = register(app.clone(), "owner@example.com", "hunter22").await;
     let workspace_id = create_workspace(app.clone(), &token, "Acme").await;
     let workflow_id = create_workflow_id(app.clone(), &token, &workspace_id).await;
@@ -342,6 +380,13 @@ async fn get_execution_returns_persisted_result(pool: PgPool) {
         .unwrap();
     let run_body = json_body(run_response).await;
     let execution_id = run_body["id"].as_str().unwrap().to_string();
+    let workflow_uuid = Uuid::parse_str(&workflow_id).unwrap();
+    run_execution_inline(
+        &pool,
+        Uuid::parse_str(&execution_id).unwrap(),
+        workflow_uuid,
+    )
+    .await;
 
     let get_response = app
         .oneshot(authed_request(
@@ -363,7 +408,7 @@ async fn get_execution_returns_persisted_result(pool: PgPool) {
 
 #[sqlx::test]
 async fn run_workflow_404_for_non_member(pool: PgPool) {
-    let app = app(pool);
+    let app = app(pool).await;
     let owner_token = register(app.clone(), "owner@example.com", "hunter22").await;
     let stranger_token = register(app.clone(), "stranger@example.com", "hunter22").await;
     let workspace_id = create_workspace(app.clone(), &owner_token, "Acme").await;

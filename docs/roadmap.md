@@ -24,7 +24,7 @@ file up to date — see [CLAUDE.md](../CLAUDE.md) rules.
 
 - [x] Add an LLM provider abstraction supporting at least one cloud provider and one local runtime
 - [x] Implement the agent node type: prompt template + model selection + tool list
-- [ ] Introduce the queue (Redis) and move node execution from in-process to worker processes
+- [x] Introduce the queue (Redis) and move node execution from in-process to worker processes
 - [ ] Implement trace event publishing from workers and a WebSocket channel on the API
 - [ ] Build the live execution trace UI (step-by-step, real-time status per node)
 - [ ] Implement MCP client support in workers (connect to and call tools on an MCP server)

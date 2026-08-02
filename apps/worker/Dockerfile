@@ -5,16 +5,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libs
     && rm -rf /var/lib/apt/lists/*
 
 COPY Cargo.toml Cargo.lock ./
-COPY apps/api/Cargo.toml apps/api/Cargo.toml
-COPY apps/api/src apps/api/src
-COPY apps/api/migrations apps/api/migrations
+COPY apps/worker/Cargo.toml apps/worker/Cargo.toml
+COPY apps/worker/src apps/worker/src
 COPY apps/executor apps/executor
 COPY apps/llm apps/llm
 COPY apps/queue apps/queue
-COPY apps/worker/Cargo.toml apps/worker/Cargo.toml
-COPY apps/worker/src apps/worker/src
+COPY apps/api/Cargo.toml apps/api/Cargo.toml
+COPY apps/api/src apps/api/src
+COPY apps/api/migrations apps/api/migrations
 
-RUN cargo build --release --manifest-path apps/api/Cargo.toml
+RUN cargo build --release --manifest-path apps/worker/Cargo.toml
 
 FROM debian:bookworm-slim AS runtime
 WORKDIR /app
@@ -22,8 +22,6 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# sqlx::migrate! embeds migrations/ into the binary at compile time, so it isn't needed here.
-COPY --from=build /build/target/release/api /app/api
+COPY --from=build /build/target/release/worker /app/worker
 
-EXPOSE 8080
-CMD ["/app/api"]
+CMD ["/app/worker"]

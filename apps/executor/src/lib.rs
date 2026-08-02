@@ -44,6 +44,16 @@ pub struct ExecutionResult {
     pub nodes: Vec<NodeResult>,
 }
 
+/// Channel a caller can pass to `execute` to observe each `NodeResult` as it's produced,
+/// for live-trace UIs. Send failures (no receiver left) are ignored.
+pub type EventSender = tokio::sync::mpsc::UnboundedSender<NodeResult>;
+
+fn emit(events: Option<&EventSender>, result: &NodeResult) {
+    if let Some(tx) = events {
+        let _ = tx.send(result.clone());
+    }
+}
+
 /// Runs a workflow graph to completion in-process (no queue/workers yet).
 ///
 /// Nodes are processed in topological order. A node whose inbound edges never fire (its
@@ -56,6 +66,7 @@ pub async fn execute(
     nodes: &[Node],
     edges: &[Edge],
     provider: Option<&dyn LlmProvider>,
+    events: Option<&EventSender>,
 ) -> ExecutionResult {
     let node_map: HashMap<Uuid, &Node> = nodes.iter().map(|n| (n.id, n)).collect();
 
@@ -91,12 +102,14 @@ pub async fn execute(
         let had_inbound = inbound.get(&node_id).is_some_and(|v| !v.is_empty());
 
         if had_inbound && inputs.is_empty() {
-            results.push(NodeResult {
+            let result = NodeResult {
                 node_id,
                 status: NodeStatus::Skipped,
                 output: None,
                 error: None,
-            });
+            };
+            emit(events, &result);
+            results.push(result);
             propagate(
                 node_id,
                 None,
@@ -122,12 +135,14 @@ pub async fn execute(
                     &mut fired_inbound,
                     &mut queue,
                 );
-                results.push(NodeResult {
+                let result = NodeResult {
                     node_id,
                     status: NodeStatus::Succeeded,
                     output: Some(output),
                     error: None,
-                });
+                };
+                emit(events, &result);
+                results.push(result);
             }
             Err(err) => {
                 propagate(
@@ -138,24 +153,28 @@ pub async fn execute(
                     &mut fired_inbound,
                     &mut queue,
                 );
-                results.push(NodeResult {
+                let result = NodeResult {
                     node_id,
                     status: NodeStatus::Failed,
                     output: None,
                     error: Some(err),
-                });
+                };
+                emit(events, &result);
+                results.push(result);
             }
         }
     }
 
     for n in nodes {
         if !visited.contains(&n.id) {
-            results.push(NodeResult {
+            let result = NodeResult {
                 node_id: n.id,
                 status: NodeStatus::Failed,
                 output: None,
                 error: Some("node was never resolved (cycle in workflow graph?)".into()),
-            });
+            };
+            emit(events, &result);
+            results.push(result);
         }
     }
 
@@ -398,7 +417,7 @@ mod tests {
         ];
         let edges = vec![edge(a, b, None), edge(b, c, None)];
 
-        let result = execute(&nodes, &edges, None).await;
+        let result = execute(&nodes, &edges, None, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Succeeded);
         assert_eq!(
@@ -442,7 +461,7 @@ mod tests {
             edge(cond, on_false, Some("false")),
         ];
 
-        let result = execute(&nodes, &edges, None).await;
+        let result = execute(&nodes, &edges, None, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Succeeded);
         assert_eq!(status_of(&result, on_true), NodeStatus::Succeeded);
@@ -476,7 +495,7 @@ mod tests {
             edge(cond, on_false, Some("false")),
         ];
 
-        let result = execute(&nodes, &edges, None).await;
+        let result = execute(&nodes, &edges, None, None).await;
 
         assert_eq!(status_of(&result, on_true), NodeStatus::Skipped);
         assert_eq!(status_of(&result, on_false), NodeStatus::Succeeded);
@@ -497,7 +516,7 @@ mod tests {
         ];
         let edges = vec![edge(input, cond, None)];
 
-        let result = execute(&nodes, &edges, None).await;
+        let result = execute(&nodes, &edges, None, None).await;
 
         assert_eq!(
             *output_of(&result, cond),
@@ -518,7 +537,7 @@ mod tests {
         ];
         let edges = vec![edge(a, join, None), edge(b, join, None)];
 
-        let result = execute(&nodes, &edges, None).await;
+        let result = execute(&nodes, &edges, None, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Succeeded);
         let output = output_of(&result, join);
@@ -530,7 +549,7 @@ mod tests {
     async fn unknown_node_type_fails() {
         let a = Uuid::new_v4();
         let nodes = vec![node(a, "bogus", Value::Null)];
-        let result = execute(&nodes, &[], None).await;
+        let result = execute(&nodes, &[], None, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Failed);
         assert_eq!(status_of(&result, a), NodeStatus::Failed);
@@ -547,7 +566,7 @@ mod tests {
         ];
         let edges = vec![edge(a, b, None)];
 
-        let result = execute(&nodes, &edges, None).await;
+        let result = execute(&nodes, &edges, None, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Failed);
         assert_eq!(status_of(&result, a), NodeStatus::Failed);
@@ -565,7 +584,7 @@ mod tests {
         ];
         let edges = vec![edge(a, b, None), edge(b, a, None)];
 
-        let result = execute(&nodes, &edges, None).await;
+        let result = execute(&nodes, &edges, None, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Failed);
         assert_eq!(status_of(&result, a), NodeStatus::Failed);
@@ -578,7 +597,11 @@ mod tests {
         let agent = Uuid::new_v4();
 
         let nodes = vec![
-            node(input, "input", serde_json::json!({ "value": { "name": "Sanket" } })),
+            node(
+                input,
+                "input",
+                serde_json::json!({ "value": { "name": "Sanket" } }),
+            ),
             node(
                 agent,
                 "agent",
@@ -587,7 +610,7 @@ mod tests {
         ];
         let edges = vec![edge(input, agent, None)];
 
-        let result = execute(&nodes, &edges, Some(&EchoProvider)).await;
+        let result = execute(&nodes, &edges, Some(&EchoProvider), None).await;
 
         assert_eq!(result.status, ExecutionStatus::Succeeded);
         assert_eq!(
@@ -605,7 +628,7 @@ mod tests {
             serde_json::json!({ "prompt": "hi", "model": "test-model" }),
         )];
 
-        let result = execute(&nodes, &[], None).await;
+        let result = execute(&nodes, &[], None, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Failed);
         assert_eq!(status_of(&result, a), NodeStatus::Failed);

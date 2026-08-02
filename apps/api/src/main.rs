@@ -1,5 +1,6 @@
 use anyhow::Context;
 use api::{routes, state::AppState};
+use redis::aio::ConnectionManager;
 use sqlx::postgres::PgPoolOptions;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
@@ -16,6 +17,8 @@ async fn main() -> anyhow::Result<()> {
 
     let database_url = std::env::var("DATABASE_URL").context("DATABASE_URL must be set")?;
     let jwt_secret = std::env::var("JWT_SECRET").context("JWT_SECRET must be set")?;
+    let redis_url =
+        std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
 
     let pool = PgPoolOptions::new()
         .max_connections(10)
@@ -28,7 +31,16 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("failed to run migrations")?;
 
-    let state = AppState { pool, jwt_secret };
+    let redis_client = redis::Client::open(redis_url.as_str()).context("invalid REDIS_URL")?;
+    let redis = ConnectionManager::new(redis_client)
+        .await
+        .context("failed to connect to redis")?;
+
+    let state = AppState {
+        pool,
+        jwt_secret,
+        redis,
+    };
     let app = routes::build(state)
         .layer(
             TraceLayer::new_for_http()

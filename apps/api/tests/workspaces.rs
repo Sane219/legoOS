@@ -9,7 +9,7 @@ use common::{app, authed_json_request, authed_request, json_body, register};
 
 #[sqlx::test]
 async fn create_workspace_succeeds(pool: PgPool) {
-    let app = app(pool);
+    let app = app(pool).await;
     let token = register(app.clone(), "owner@example.com", "hunter22").await;
 
     let response = app
@@ -30,7 +30,7 @@ async fn create_workspace_succeeds(pool: PgPool) {
 
 #[sqlx::test]
 async fn create_workspace_rejects_empty_name(pool: PgPool) {
-    let app = app(pool);
+    let app = app(pool).await;
     let token = register(app.clone(), "owner@example.com", "hunter22").await;
 
     let response = app
@@ -48,7 +48,7 @@ async fn create_workspace_rejects_empty_name(pool: PgPool) {
 
 #[sqlx::test]
 async fn list_workspaces_returns_only_member_workspaces(pool: PgPool) {
-    let app = app(pool);
+    let app = app(pool).await;
     let token_a = register(app.clone(), "alice@example.com", "hunter22").await;
     let token_b = register(app.clone(), "bob@example.com", "hunter22").await;
 
@@ -85,7 +85,7 @@ async fn list_workspaces_returns_only_member_workspaces(pool: PgPool) {
 
 #[sqlx::test]
 async fn get_workspace_404_for_non_member(pool: PgPool) {
-    let app = app(pool);
+    let app = app(pool).await;
     let token_a = register(app.clone(), "alice@example.com", "hunter22").await;
     let token_b = register(app.clone(), "bob@example.com", "hunter22").await;
 
@@ -115,7 +115,7 @@ async fn get_workspace_404_for_non_member(pool: PgPool) {
 
 #[sqlx::test]
 async fn add_member_succeeds_when_owner_and_appears_in_member_list(pool: PgPool) {
-    let app = app(pool);
+    let app = app(pool).await;
     let token_a = register(app.clone(), "alice@example.com", "hunter22").await;
     let _token_b = register(app.clone(), "bob@example.com", "hunter22").await;
 
@@ -161,7 +161,7 @@ async fn add_member_succeeds_when_owner_and_appears_in_member_list(pool: PgPool)
 
 #[sqlx::test]
 async fn add_member_forbidden_when_not_owner(pool: PgPool) {
-    let app = app(pool);
+    let app = app(pool).await;
     let token_a = register(app.clone(), "alice@example.com", "hunter22").await;
     let token_b = register(app.clone(), "bob@example.com", "hunter22").await;
     let _token_c = register(app.clone(), "carol@example.com", "hunter22").await;
@@ -203,7 +203,7 @@ async fn add_member_forbidden_when_not_owner(pool: PgPool) {
 
 #[sqlx::test]
 async fn add_member_conflict_when_already_a_member(pool: PgPool) {
-    let app = app(pool);
+    let app = app(pool).await;
     let token_a = register(app.clone(), "alice@example.com", "hunter22").await;
     let _token_b = register(app.clone(), "bob@example.com", "hunter22").await;
 
@@ -244,7 +244,7 @@ async fn add_member_conflict_when_already_a_member(pool: PgPool) {
 
 #[sqlx::test]
 async fn add_member_validation_when_email_unknown(pool: PgPool) {
-    let app = app(pool);
+    let app = app(pool).await;
     let token_a = register(app.clone(), "alice@example.com", "hunter22").await;
 
     let created = app

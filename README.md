@@ -110,8 +110,18 @@ phased steps. See [docs/roadmap.md](docs/roadmap.md) for the full build plan and
 - `docker compose` for the full stack, with CI covering both the Rust backend and the
   Next.js frontend on every push
 
-Redis, Qdrant, and the `worker` crate are provisioned/scaffolded but not yet wired up — they
-land with Phase 2's async queue and RAG work.
+**Phase 2 (AI + Security Core) is in progress.** Landed so far:
+
+- An LLM provider abstraction (`llm` crate) with an Anthropic cloud provider and an Ollama
+  local-runtime provider, selected via `LLM_PROVIDER`
+- An `agent` node type: prompt template + model selection (tool list is accepted in config,
+  invoked once MCP client support lands)
+- A Redis Streams job queue (`queue` crate): the API enqueues a workflow run and returns
+  immediately; the `worker` process consumes it via a consumer group, runs the DAG, and
+  persists results. Stuck jobs are reclaimed and, past `MAX_DELIVERIES`, routed to a
+  dead-letter stream instead of retried forever.
+
+Qdrant is provisioned but not yet wired up — that lands with Phase 3's RAG work.
 
 ## Documentation
 

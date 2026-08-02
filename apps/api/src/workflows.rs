@@ -243,6 +243,9 @@ pub async fn save_graph(
     .await
 }
 
+/// Enqueues a workflow run and returns immediately; a worker process picks the job up off
+/// the `queue::WORKFLOW_RUNS_STREAM` Redis stream and executes it. Poll `GET .../executions/:id`
+/// (or the trace WebSocket) to observe progress.
 pub async fn run_workflow(
     State(state): State<AppState>,
     AuthUser(user_id): AuthUser,
@@ -253,106 +256,40 @@ pub async fn run_workflow(
         .ok_or_else(|| AppError::NotFound("workspace not found".into()))?;
     ensure_workflow_exists(&state.pool, workspace_id, workflow_id).await?;
 
-    let node_rows = sqlx::query_as::<_, (Uuid, String, Value)>(
-        "SELECT id, node_type, config FROM workflow_nodes WHERE workflow_id = $1",
+    let (execution_id, started_at) = sqlx::query_as::<_, (Uuid, DateTime<Utc>)>(
+        "INSERT INTO workflow_executions (workflow_id, status, triggered_by)
+         VALUES ($1, 'pending', $2)
+         RETURNING id, started_at",
     )
     .bind(workflow_id)
-    .fetch_all(&state.pool)
+    .bind(user_id)
+    .fetch_one(&state.pool)
     .await
     .map_err(|e| AppError::Internal(e.into()))?;
 
-    let edge_rows = sqlx::query_as::<_, (Uuid, Uuid, Option<String>)>(
-        "SELECT source_node_id, target_node_id, condition FROM workflow_edges WHERE workflow_id = $1",
-    )
-    .bind(workflow_id)
-    .fetch_all(&state.pool)
-    .await
-    .map_err(|e| AppError::Internal(e.into()))?;
-
-    let dag_nodes: Vec<executor::Node> = node_rows
-        .into_iter()
-        .map(|(id, node_type, config)| executor::Node {
-            id,
-            node_type,
-            config,
-        })
-        .collect();
-    let dag_edges: Vec<executor::Edge> = edge_rows
-        .into_iter()
-        .map(|(source, target, condition)| executor::Edge {
-            source,
-            target,
-            condition,
-        })
-        .collect();
-
-    let provider = llm::provider_from_env().ok();
-    let result = executor::execute(&dag_nodes, &dag_edges, provider.as_deref()).await;
-
-    let status_str = match result.status {
-        executor::ExecutionStatus::Succeeded => "succeeded",
-        executor::ExecutionStatus::Failed => "failed",
+    let job = queue::RunJob {
+        execution_id,
+        workflow_id,
     };
+    let job_json = serde_json::to_string(&job).expect("RunJob always serializes");
 
-    let mut tx = state
-        .pool
-        .begin()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
-
-    let (execution_id, started_at, finished_at) =
-        sqlx::query_as::<_, (Uuid, DateTime<Utc>, DateTime<Utc>)>(
-            "INSERT INTO workflow_executions (workflow_id, status, triggered_by)
-         VALUES ($1, $2, $3)
-         RETURNING id, started_at, finished_at",
-        )
-        .bind(workflow_id)
-        .bind(status_str)
-        .bind(user_id)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
-
-    let mut node_responses = Vec::with_capacity(result.nodes.len());
-    for node_result in &result.nodes {
-        let node_status_str = match node_result.status {
-            executor::NodeStatus::Succeeded => "succeeded",
-            executor::NodeStatus::Failed => "failed",
-            executor::NodeStatus::Skipped => "skipped",
-        };
-
-        sqlx::query(
-            "INSERT INTO workflow_execution_nodes (execution_id, node_id, status, output, error)
-             VALUES ($1, $2, $3, $4, $5)",
-        )
-        .bind(execution_id)
-        .bind(node_result.node_id)
-        .bind(node_status_str)
-        .bind(&node_result.output)
-        .bind(&node_result.error)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
-
-        node_responses.push(ExecutionNodeResponse {
-            node_id: node_result.node_id,
-            status: node_status_str.to_string(),
-            output: node_result.output.clone(),
-            error: node_result.error.clone(),
-        });
-    }
-
-    tx.commit()
+    let mut redis = state.redis.clone();
+    redis::cmd("XADD")
+        .arg(queue::WORKFLOW_RUNS_STREAM)
+        .arg("*")
+        .arg(queue::JOB_FIELD)
+        .arg(job_json)
+        .query_async::<()>(&mut redis)
         .await
         .map_err(|e| AppError::Internal(e.into()))?;
 
     Ok(Json(ExecutionResponse {
         id: execution_id,
         workflow_id,
-        status: status_str.to_string(),
+        status: "pending".to_string(),
         started_at,
-        finished_at: Some(finished_at),
-        nodes: node_responses,
+        finished_at: None,
+        nodes: Vec::new(),
     }))
 }
 

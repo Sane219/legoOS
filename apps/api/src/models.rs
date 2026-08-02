@@ -183,3 +183,44 @@ impl From<McpConnectionRow> for McpConnectionResponse {
         }
     }
 }
+
+#[derive(Debug, sqlx::FromRow)]
+pub struct ApprovalGateRow {
+    pub id: Uuid,
+    pub execution_id: Uuid,
+    pub workflow_id: Uuid,
+    pub workflow_name: String,
+    pub node_id: Uuid,
+    /// The merged upstream input the gate paused on — whatever context an approver needs
+    /// to decide, captured at the moment execution reached this node.
+    pub context: Option<Value>,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ApprovalGateResponse {
+    pub id: Uuid,
+    pub execution_id: Uuid,
+    pub workflow_id: Uuid,
+    pub workflow_name: String,
+    pub node_id: Uuid,
+    pub context: Option<Value>,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+}
+
+impl From<ApprovalGateRow> for ApprovalGateResponse {
+    fn from(row: ApprovalGateRow) -> Self {
+        ApprovalGateResponse {
+            id: row.id,
+            execution_id: row.execution_id,
+            workflow_id: row.workflow_id,
+            workflow_name: row.workflow_name,
+            node_id: row.node_id,
+            context: row.context,
+            status: row.status,
+            created_at: row.created_at,
+        }
+    }
+}

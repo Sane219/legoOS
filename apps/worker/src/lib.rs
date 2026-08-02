@@ -223,18 +223,70 @@ async fn resolve_mcp_connections(
     Ok(())
 }
 
-fn to_trace_event(result: &executor::NodeResult) -> TraceEvent {
-    let status = match result.status {
+fn node_status_str(status: executor::NodeStatus) -> &'static str {
+    match status {
         executor::NodeStatus::Succeeded => "succeeded",
         executor::NodeStatus::Failed => "failed",
         executor::NodeStatus::Skipped => "skipped",
-    };
+        executor::NodeStatus::Waiting => "waiting",
+    }
+}
+
+fn to_trace_event(result: &executor::NodeResult) -> TraceEvent {
     TraceEvent::NodeResult {
         node_id: result.node_id,
-        status: status.to_string(),
+        status: node_status_str(result.status).to_string(),
         output: result.output.clone(),
         error: result.error.clone(),
     }
+}
+
+/// Loads everything needed to resume a possibly-paused execution: prior node results
+/// (excluding any still `waiting` — the gate they belong to is re-evaluated fresh below,
+/// not replayed) and decisions for any approval gates a human has already acted on.
+async fn load_resume_state(
+    pool: &PgPool,
+    execution_id: Uuid,
+) -> anyhow::Result<executor::ResumeState> {
+    let seed_rows = sqlx::query_as::<_, (Uuid, String, Option<Value>, Option<String>)>(
+        "SELECT node_id, status, output, error FROM workflow_execution_nodes
+         WHERE execution_id = $1 AND status != 'waiting'",
+    )
+    .bind(execution_id)
+    .fetch_all(pool)
+    .await?;
+
+    let seed_results = seed_rows
+        .into_iter()
+        .map(|(node_id, status, output, error)| executor::NodeResult {
+            node_id,
+            status: match status.as_str() {
+                "succeeded" => executor::NodeStatus::Succeeded,
+                "skipped" => executor::NodeStatus::Skipped,
+                _ => executor::NodeStatus::Failed,
+            },
+            output,
+            error,
+        })
+        .collect();
+
+    let decision_rows = sqlx::query_as::<_, (Uuid, String)>(
+        "SELECT node_id, status FROM approval_gates
+         WHERE execution_id = $1 AND status != 'pending'",
+    )
+    .bind(execution_id)
+    .fetch_all(pool)
+    .await?;
+
+    let approval_decisions = decision_rows
+        .into_iter()
+        .map(|(node_id, status)| (node_id, status == "approved"))
+        .collect();
+
+    Ok(executor::ResumeState {
+        seed_results,
+        approval_decisions,
+    })
 }
 
 pub async fn run_job(
@@ -287,6 +339,8 @@ pub async fn run_job(
         })
         .collect();
 
+    let resume_state = load_resume_state(pool, job.execution_id).await?;
+
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<executor::NodeResult>();
     let channel = queue::trace_channel(job.execution_id);
     let mut publisher_redis = redis.clone();
@@ -300,40 +354,60 @@ pub async fn run_job(
     });
 
     let provider_ref = provider.map(Arc::as_ref);
-    let result = executor::execute(&nodes, &edges, provider_ref, Some(&tx)).await;
+    let result =
+        executor::execute(&nodes, &edges, provider_ref, Some(&tx), Some(&resume_state)).await;
     drop(tx);
     let _ = publisher.await;
 
     let status_str = match result.status {
         executor::ExecutionStatus::Succeeded => "succeeded",
         executor::ExecutionStatus::Failed => "failed",
+        executor::ExecutionStatus::Waiting => "waiting",
     };
 
     let mut db_tx = pool.begin().await?;
-    sqlx::query("UPDATE workflow_executions SET status = $1, finished_at = now() WHERE id = $2")
+    if result.status == executor::ExecutionStatus::Waiting {
+        sqlx::query("UPDATE workflow_executions SET status = $1 WHERE id = $2")
+            .bind(status_str)
+            .bind(job.execution_id)
+            .execute(&mut *db_tx)
+            .await?;
+    } else {
+        sqlx::query(
+            "UPDATE workflow_executions SET status = $1, finished_at = now() WHERE id = $2",
+        )
         .bind(status_str)
         .bind(job.execution_id)
         .execute(&mut *db_tx)
         .await?;
+    }
 
     for node_result in &result.nodes {
-        let node_status_str = match node_result.status {
-            executor::NodeStatus::Succeeded => "succeeded",
-            executor::NodeStatus::Failed => "failed",
-            executor::NodeStatus::Skipped => "skipped",
-        };
-
         sqlx::query(
             "INSERT INTO workflow_execution_nodes (execution_id, node_id, status, output, error)
-             VALUES ($1, $2, $3, $4, $5)",
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (execution_id, node_id)
+             DO UPDATE SET status = excluded.status, output = excluded.output, error = excluded.error",
         )
         .bind(job.execution_id)
         .bind(node_result.node_id)
-        .bind(node_status_str)
+        .bind(node_status_str(node_result.status))
         .bind(&node_result.output)
         .bind(&node_result.error)
         .execute(&mut *db_tx)
         .await?;
+
+        if node_result.status == executor::NodeStatus::Waiting {
+            sqlx::query(
+                "INSERT INTO approval_gates (execution_id, node_id)
+                 VALUES ($1, $2)
+                 ON CONFLICT (execution_id, node_id) DO NOTHING",
+            )
+            .bind(job.execution_id)
+            .bind(node_result.node_id)
+            .execute(&mut *db_tx)
+            .await?;
+        }
     }
 
     db_tx.commit().await?;

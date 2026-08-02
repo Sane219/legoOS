@@ -22,6 +22,10 @@ pub enum NodeStatus {
     Succeeded,
     Failed,
     Skipped,
+    /// An `approval` node with no decision yet. Its outgoing edges don't fire — the
+    /// nodes downstream of it simply stay unresolved until a resumed run supplies a
+    /// decision (see `ResumeState`), rather than being marked Failed as "never resolved".
+    Waiting,
 }
 
 #[derive(Debug, Clone)]
@@ -36,12 +40,32 @@ pub struct NodeResult {
 pub enum ExecutionStatus {
     Succeeded,
     Failed,
+    /// At least one `approval` node is blocked on a decision. Takes priority over
+    /// `Failed` so an operator sees "needs your input" rather than "failed".
+    Waiting,
 }
 
 #[derive(Debug)]
 pub struct ExecutionResult {
     pub status: ExecutionStatus,
     pub nodes: Vec<NodeResult>,
+}
+
+/// Lets a caller resume a previously paused run (one with an `approval` node still
+/// `Waiting`) without recomputing nodes that already ran — critical for nodes with side
+/// effects (an `agent` node's LLM call, an MCP tool call): replaying them would repeat
+/// those effects rather than just restating their recorded output.
+#[derive(Debug, Default)]
+pub struct ResumeState {
+    /// Prior results for nodes that already completed (anything but `Waiting` — a
+    /// `Waiting` result is never seeded; the gate it belongs to is re-evaluated fresh
+    /// against `approval_decisions` below instead of being replayed).
+    pub seed_results: Vec<NodeResult>,
+    /// Decisions for `approval` nodes being resumed right now: `true` = approved (the
+    /// node succeeds and its edges fire), `false` = rejected (fails, no propagation).
+    /// An approval node with no entry here (and no seed) is encountered fresh and
+    /// produces `Waiting`, same as on a first run.
+    pub approval_decisions: HashMap<Uuid, bool>,
 }
 
 /// Channel a caller can pass to `execute` to observe each `NodeResult` as it's produced,
@@ -67,6 +91,7 @@ pub async fn execute(
     edges: &[Edge],
     provider: Option<&dyn LlmProvider>,
     events: Option<&EventSender>,
+    resume: Option<&ResumeState>,
 ) -> ExecutionResult {
     let node_map: HashMap<Uuid, &Node> = nodes.iter().map(|n| (n.id, n)).collect();
 
@@ -87,6 +112,21 @@ pub async fn execute(
     let mut queue: VecDeque<Uuid> = VecDeque::new();
     let mut visited: HashSet<Uuid> = HashSet::new();
 
+    // Defensive against a caller passing a `Waiting` entry through `seed_results` (it's
+    // documented not to, but replaying "waiting" would just re-pause forever): a gate
+    // is always re-evaluated fresh against `approval_decisions`, never replayed as-is.
+    let seed_by_node: HashMap<Uuid, &NodeResult> = resume
+        .map(|r| {
+            r.seed_results
+                .iter()
+                .filter(|res| res.status != NodeStatus::Waiting)
+                .map(|res| (res.node_id, res))
+                .collect()
+        })
+        .unwrap_or_default();
+    let empty_decisions = HashMap::new();
+    let approval_decisions = resume.map_or(&empty_decisions, |r| &r.approval_decisions);
+
     for n in nodes {
         if unresolved.get(&n.id).copied().unwrap_or(0) == 0 {
             queue.push_back(n.id);
@@ -99,6 +139,28 @@ pub async fn execute(
         }
 
         let inputs = fired_inbound.remove(&node_id).unwrap_or_default();
+
+        // Replay a node that already completed in a prior (paused) run instead of
+        // recomputing it — recomputing would repeat any side effect (an LLM call, an
+        // MCP tool call) the node performed the first time.
+        if let Some(seed) = seed_by_node.get(&node_id) {
+            let result = (*seed).clone();
+            emit(events, &result);
+            let propagate_output = matches!(result.status, NodeStatus::Succeeded)
+                .then(|| result.output.clone())
+                .flatten();
+            propagate(
+                node_id,
+                propagate_output.as_ref(),
+                &outbound,
+                &mut unresolved,
+                &mut fired_inbound,
+                &mut queue,
+            );
+            results.push(result);
+            continue;
+        }
+
         let had_inbound = inbound.get(&node_id).is_some_and(|v| !v.is_empty());
 
         if had_inbound && inputs.is_empty() {
@@ -124,6 +186,53 @@ pub async fn execute(
         let Some(node) = node_map.get(&node_id) else {
             continue;
         };
+
+        if node.node_type == "approval" {
+            let result = match approval_decisions.get(&node_id) {
+                Some(true) => NodeResult {
+                    node_id,
+                    status: NodeStatus::Succeeded,
+                    output: Some(merge_inputs(&inputs)),
+                    error: None,
+                },
+                Some(false) => NodeResult {
+                    node_id,
+                    status: NodeStatus::Failed,
+                    output: None,
+                    error: Some("approval rejected".to_string()),
+                },
+                None => NodeResult {
+                    node_id,
+                    status: NodeStatus::Waiting,
+                    output: Some(merge_inputs(&inputs)),
+                    error: None,
+                },
+            };
+            emit(events, &result);
+            if result.status == NodeStatus::Succeeded {
+                propagate(
+                    node_id,
+                    result.output.as_ref(),
+                    &outbound,
+                    &mut unresolved,
+                    &mut fired_inbound,
+                    &mut queue,
+                );
+            } else if result.status == NodeStatus::Failed {
+                propagate(
+                    node_id,
+                    None,
+                    &outbound,
+                    &mut unresolved,
+                    &mut fired_inbound,
+                    &mut queue,
+                );
+            }
+            // Waiting: no propagation — downstream nodes intentionally stay unresolved
+            // until this gate is decided in a resumed run.
+            results.push(result);
+            continue;
+        }
 
         match run_node(node, &inputs, provider).await {
             Ok(output) => {
@@ -165,20 +274,32 @@ pub async fn execute(
         }
     }
 
-    for n in nodes {
-        if !visited.contains(&n.id) {
-            let result = NodeResult {
-                node_id: n.id,
-                status: NodeStatus::Failed,
-                output: None,
-                error: Some("node was never resolved (cycle in workflow graph?)".into()),
-            };
-            emit(events, &result);
-            results.push(result);
+    let any_waiting = results.iter().any(|r| r.status == NodeStatus::Waiting);
+
+    // A node left unvisited is normally a cycle. But a node downstream of a `Waiting`
+    // approval gate is *supposed* to stay unvisited until the gate is decided — reporting
+    // it as Failed would be wrong, so once any gate is waiting we just leave those nodes
+    // out of `results` entirely (they aren't cycles, we simply can't tell which unvisited
+    // nodes are "blocked behind the gate" from "genuinely cyclic" without a full reachability
+    // pass, and blocked-by-a-pending-approval is by far the common case here).
+    if !any_waiting {
+        for n in nodes {
+            if !visited.contains(&n.id) {
+                let result = NodeResult {
+                    node_id: n.id,
+                    status: NodeStatus::Failed,
+                    output: None,
+                    error: Some("node was never resolved (cycle in workflow graph?)".into()),
+                };
+                emit(events, &result);
+                results.push(result);
+            }
         }
     }
 
-    let status = if results.iter().any(|r| r.status == NodeStatus::Failed) {
+    let status = if any_waiting {
+        ExecutionStatus::Waiting
+    } else if results.iter().any(|r| r.status == NodeStatus::Failed) {
         ExecutionStatus::Failed
     } else {
         ExecutionStatus::Succeeded
@@ -460,7 +581,7 @@ mod tests {
         ];
         let edges = vec![edge(a, b, None), edge(b, c, None)];
 
-        let result = execute(&nodes, &edges, None, None).await;
+        let result = execute(&nodes, &edges, None, None, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Succeeded);
         assert_eq!(
@@ -504,7 +625,7 @@ mod tests {
             edge(cond, on_false, Some("false")),
         ];
 
-        let result = execute(&nodes, &edges, None, None).await;
+        let result = execute(&nodes, &edges, None, None, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Succeeded);
         assert_eq!(status_of(&result, on_true), NodeStatus::Succeeded);
@@ -538,7 +659,7 @@ mod tests {
             edge(cond, on_false, Some("false")),
         ];
 
-        let result = execute(&nodes, &edges, None, None).await;
+        let result = execute(&nodes, &edges, None, None, None).await;
 
         assert_eq!(status_of(&result, on_true), NodeStatus::Skipped);
         assert_eq!(status_of(&result, on_false), NodeStatus::Succeeded);
@@ -559,7 +680,7 @@ mod tests {
         ];
         let edges = vec![edge(input, cond, None)];
 
-        let result = execute(&nodes, &edges, None, None).await;
+        let result = execute(&nodes, &edges, None, None, None).await;
 
         assert_eq!(
             *output_of(&result, cond),
@@ -580,7 +701,7 @@ mod tests {
         ];
         let edges = vec![edge(a, join, None), edge(b, join, None)];
 
-        let result = execute(&nodes, &edges, None, None).await;
+        let result = execute(&nodes, &edges, None, None, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Succeeded);
         let output = output_of(&result, join);
@@ -592,7 +713,7 @@ mod tests {
     async fn unknown_node_type_fails() {
         let a = Uuid::new_v4();
         let nodes = vec![node(a, "bogus", Value::Null)];
-        let result = execute(&nodes, &[], None, None).await;
+        let result = execute(&nodes, &[], None, None, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Failed);
         assert_eq!(status_of(&result, a), NodeStatus::Failed);
@@ -609,7 +730,7 @@ mod tests {
         ];
         let edges = vec![edge(a, b, None)];
 
-        let result = execute(&nodes, &edges, None, None).await;
+        let result = execute(&nodes, &edges, None, None, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Failed);
         assert_eq!(status_of(&result, a), NodeStatus::Failed);
@@ -627,7 +748,7 @@ mod tests {
         ];
         let edges = vec![edge(a, b, None), edge(b, a, None)];
 
-        let result = execute(&nodes, &edges, None, None).await;
+        let result = execute(&nodes, &edges, None, None, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Failed);
         assert_eq!(status_of(&result, a), NodeStatus::Failed);
@@ -653,7 +774,7 @@ mod tests {
         ];
         let edges = vec![edge(input, agent, None)];
 
-        let result = execute(&nodes, &edges, Some(&EchoProvider), None).await;
+        let result = execute(&nodes, &edges, Some(&EchoProvider), None, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Succeeded);
         assert_eq!(
@@ -671,9 +792,146 @@ mod tests {
             serde_json::json!({ "prompt": "hi", "model": "test-model" }),
         )];
 
-        let result = execute(&nodes, &[], None, None).await;
+        let result = execute(&nodes, &[], None, None, None).await;
 
         assert_eq!(result.status, ExecutionStatus::Failed);
         assert_eq!(status_of(&result, a), NodeStatus::Failed);
+    }
+
+    #[tokio::test]
+    async fn approval_node_pauses_execution_and_blocks_downstream() {
+        let input = Uuid::new_v4();
+        let gate = Uuid::new_v4();
+        let downstream = Uuid::new_v4();
+
+        let nodes = vec![
+            node(input, "input", serde_json::json!({ "value": { "x": 1 } })),
+            node(gate, "approval", Value::Null),
+            node(
+                downstream,
+                "transform",
+                serde_json::json!({ "merge": { "y": 2 } }),
+            ),
+        ];
+        let edges = vec![edge(input, gate, None), edge(gate, downstream, None)];
+
+        let result = execute(&nodes, &edges, None, None, None).await;
+
+        assert_eq!(result.status, ExecutionStatus::Waiting);
+        assert_eq!(status_of(&result, gate), NodeStatus::Waiting);
+        // Blocked behind the gate: not run, not reported as a bogus "cycle" failure either.
+        assert!(result.nodes.iter().all(|n| n.node_id != downstream));
+    }
+
+    #[tokio::test]
+    async fn approved_resume_replays_upstream_and_runs_downstream() {
+        let input = Uuid::new_v4();
+        let gate = Uuid::new_v4();
+        let downstream = Uuid::new_v4();
+
+        let nodes = vec![
+            node(input, "input", serde_json::json!({ "value": { "x": 1 } })),
+            node(gate, "approval", Value::Null),
+            node(
+                downstream,
+                "transform",
+                serde_json::json!({ "merge": { "y": 2 } }),
+            ),
+        ];
+        let edges = vec![edge(input, gate, None), edge(gate, downstream, None)];
+
+        let first = execute(&nodes, &edges, None, None, None).await;
+        let seed_results = first.nodes.clone();
+
+        let mut approval_decisions = HashMap::new();
+        approval_decisions.insert(gate, true);
+        let resume = ResumeState {
+            seed_results,
+            approval_decisions,
+        };
+
+        let second = execute(&nodes, &edges, None, None, Some(&resume)).await;
+
+        assert_eq!(second.status, ExecutionStatus::Succeeded);
+        assert_eq!(status_of(&second, gate), NodeStatus::Succeeded);
+        assert_eq!(status_of(&second, downstream), NodeStatus::Succeeded);
+        assert_eq!(
+            *output_of(&second, downstream),
+            serde_json::json!({ "x": 1, "y": 2 })
+        );
+    }
+
+    #[tokio::test]
+    async fn rejected_resume_fails_the_gate_and_skips_downstream() {
+        let input = Uuid::new_v4();
+        let gate = Uuid::new_v4();
+        let downstream = Uuid::new_v4();
+
+        let nodes = vec![
+            node(input, "input", serde_json::json!({ "value": { "x": 1 } })),
+            node(gate, "approval", Value::Null),
+            node(downstream, "transform", Value::Null),
+        ];
+        let edges = vec![edge(input, gate, None), edge(gate, downstream, None)];
+
+        let first = execute(&nodes, &edges, None, None, None).await;
+
+        let mut approval_decisions = HashMap::new();
+        approval_decisions.insert(gate, false);
+        let resume = ResumeState {
+            seed_results: first.nodes.clone(),
+            approval_decisions,
+        };
+
+        let second = execute(&nodes, &edges, None, None, Some(&resume)).await;
+
+        assert_eq!(second.status, ExecutionStatus::Failed);
+        assert_eq!(status_of(&second, gate), NodeStatus::Failed);
+        assert_eq!(status_of(&second, downstream), NodeStatus::Skipped);
+    }
+
+    #[tokio::test]
+    async fn seeded_nodes_are_not_recomputed_on_resume() {
+        // A provider that errors on every call: if the already-succeeded agent node were
+        // recomputed during resume instead of replayed, this would flip its status.
+        struct FailingProvider;
+        #[async_trait::async_trait]
+        impl LlmProvider for FailingProvider {
+            async fn complete(&self, _: &CompletionRequest) -> Result<String, llm::LlmError> {
+                Err(llm::LlmError::UnknownProvider(
+                    "should not be called".into(),
+                ))
+            }
+            fn name(&self) -> &'static str {
+                "failing"
+            }
+        }
+
+        let agent = Uuid::new_v4();
+        let gate = Uuid::new_v4();
+        let nodes = vec![
+            node(
+                agent,
+                "agent",
+                serde_json::json!({ "prompt": "hi", "model": "test-model" }),
+            ),
+            node(gate, "approval", Value::Null),
+        ];
+        let edges = vec![edge(agent, gate, None)];
+
+        let first = execute(&nodes, &edges, Some(&EchoProvider), None, None).await;
+        assert_eq!(status_of(&first, agent), NodeStatus::Succeeded);
+
+        let mut approval_decisions = HashMap::new();
+        approval_decisions.insert(gate, true);
+        let resume = ResumeState {
+            seed_results: first.nodes.clone(),
+            approval_decisions,
+        };
+
+        let second = execute(&nodes, &edges, Some(&FailingProvider), None, Some(&resume)).await;
+
+        assert_eq!(second.status, ExecutionStatus::Succeeded);
+        assert_eq!(status_of(&second, agent), NodeStatus::Succeeded);
     }
 }

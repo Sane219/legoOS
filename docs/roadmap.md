@@ -29,7 +29,7 @@ file up to date — see [CLAUDE.md](../CLAUDE.md) rules.
 - [x] Build the live execution trace UI (step-by-step, real-time status per node)
 - [x] Implement MCP client support in workers (connect to and call tools on an MCP server)
 - [x] Build the MCP connection management UI (add/configure an MCP server per workspace)
-- [ ] Implement the approval-gate node type (pause execution, wait for human decision)
+- [x] Implement the approval-gate node type (pause execution, wait for human decision)
 - [ ] Build the approval UI (inbox of pending approvals, approve/reject actions)
 - [ ] Implement per-workspace permission checks on agent/workflow/MCP configuration
 

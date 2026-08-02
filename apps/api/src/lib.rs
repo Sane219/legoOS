@@ -1,3 +1,4 @@
+pub mod approvals;
 pub mod auth_extractor;
 pub mod error;
 pub mod handlers;

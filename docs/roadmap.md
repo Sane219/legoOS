@@ -39,9 +39,9 @@ file up to date — see [CLAUDE.md](../CLAUDE.md) rules.
 - [x] Implement document chunking and embedding generation pipeline
 - [x] Integrate Qdrant for embedding storage and similarity search
 - [x] Implement the RAG node type (retrieve relevant chunks, inject into agent context)
-- [ ] Design and implement the long-term memory data model (per-agent, per-workspace)
-- [ ] Implement memory write (persist relevant facts/results after a run)
-- [ ] Implement memory retrieval (surface relevant memory into a new run's context)
+- [x] Design and implement the long-term memory data model (per-agent, per-workspace)
+- [x] Implement memory write (persist relevant facts/results after a run)
+- [x] Implement memory retrieval (surface relevant memory into a new run's context)
 - [ ] Implement workflow scheduling (cron-style triggers, stored and executed on time)
 - [ ] Build the scheduling UI (create/edit/pause a scheduled trigger for a workflow)
 - [ ] Implement basic evaluation scoring for agent outputs (rule-based and/or LLM-judge)

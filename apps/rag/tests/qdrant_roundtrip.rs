@@ -1,4 +1,4 @@
-use rag::{ChunkPoint, RagClient};
+use rag::{ChunkPoint, MemoryEntry, RagClient};
 use uuid::Uuid;
 
 fn qdrant_url() -> String {
@@ -71,6 +71,54 @@ async fn upserts_and_finds_only_the_matching_workspace() -> anyhow::Result<()> {
             .await?;
     }
     assert!(hits_after_delete.is_empty());
+
+    Ok(())
+}
+
+/// Memories live in their own collection, keyed by `agent_key` rather than `document_id` —
+/// two agents in the same workspace shouldn't see each other's memories.
+#[tokio::test]
+async fn remembers_and_recalls_only_the_matching_agent_key() -> anyhow::Result<()> {
+    let client = RagClient::connect(&qdrant_url())?;
+    client.ensure_memories_collection(4).await?;
+
+    let workspace_id = Uuid::new_v4();
+    let now = chrono::Utc::now();
+
+    client
+        .remember(MemoryEntry {
+            id: Uuid::new_v4(),
+            vector: vec![1.0, 0.0, 0.0, 0.0],
+            workspace_id,
+            agent_key: "billing-agent".to_string(),
+            text: "the customer's plan is Pro".to_string(),
+            created_at: now,
+        })
+        .await?;
+    client
+        .remember(MemoryEntry {
+            id: Uuid::new_v4(),
+            vector: vec![1.0, 0.0, 0.0, 0.0],
+            workspace_id,
+            agent_key: "support-agent".to_string(),
+            text: "should never surface for billing-agent's recall".to_string(),
+            created_at: now,
+        })
+        .await?;
+
+    let mut hits = Vec::new();
+    for _ in 0..10 {
+        hits = client
+            .recall(workspace_id, "billing-agent", vec![1.0, 0.0, 0.0, 0.0], 10)
+            .await?;
+        if !hits.is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].text, "the customer's plan is Pro");
 
     Ok(())
 }

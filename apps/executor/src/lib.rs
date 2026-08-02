@@ -487,6 +487,99 @@ async fn run_node(
             Ok(serde_json::json!({ "chunks": chunks }))
         }
 
+        "memory_write" => {
+            let rag = rag.ok_or_else(|| {
+                "no RAG context configured (Qdrant/embedding provider unavailable)".to_string()
+            })?;
+
+            let agent_key = node
+                .config
+                .get("agent_key")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "memory_write node missing \"agent_key\" in config".to_string())?;
+            let content_template = node
+                .config
+                .get("content")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "memory_write node missing \"content\" in config".to_string())?;
+
+            let context = merge_inputs(inputs);
+            let content = render_template(content_template, &context);
+
+            let vector = rag
+                .embedding_provider
+                .embed(&content)
+                .await
+                .map_err(|e| format!("memory_write node embedding failed: {e}"))?;
+
+            rag.client
+                .ensure_memories_collection(vector.len() as u64)
+                .await
+                .map_err(|e| format!("memory_write node failed: {e}"))?;
+            rag.client
+                .remember(rag::MemoryEntry {
+                    id: Uuid::new_v4(),
+                    vector,
+                    workspace_id: rag.workspace_id,
+                    agent_key: agent_key.to_string(),
+                    text: content.clone(),
+                    created_at: chrono::Utc::now(),
+                })
+                .await
+                .map_err(|e| format!("memory_write node failed: {e}"))?;
+
+            Ok(serde_json::json!({ "remembered": content }))
+        }
+
+        "memory_read" => {
+            let rag = rag.ok_or_else(|| {
+                "no RAG context configured (Qdrant/embedding provider unavailable)".to_string()
+            })?;
+
+            let agent_key = node
+                .config
+                .get("agent_key")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "memory_read node missing \"agent_key\" in config".to_string())?;
+            let query_template = node
+                .config
+                .get("query")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "memory_read node missing \"query\" in config".to_string())?;
+            let limit = node
+                .config
+                .get("limit")
+                .and_then(Value::as_u64)
+                .unwrap_or(5);
+
+            let context = merge_inputs(inputs);
+            let query = render_template(query_template, &context);
+
+            let vector = rag
+                .embedding_provider
+                .embed(&query)
+                .await
+                .map_err(|e| format!("memory_read node embedding failed: {e}"))?;
+            let hits = rag
+                .client
+                .recall(rag.workspace_id, agent_key, vector, limit)
+                .await
+                .map_err(|e| format!("memory_read node recall failed: {e}"))?;
+
+            let memories: Vec<Value> = hits
+                .into_iter()
+                .map(|hit| {
+                    serde_json::json!({
+                        "text": hit.text,
+                        "created_at": hit.created_at.to_rfc3339(),
+                        "score": hit.score,
+                    })
+                })
+                .collect();
+
+            Ok(serde_json::json!({ "memories": memories }))
+        }
+
         "transform" => {
             let base = merge_inputs(inputs);
             let mut object = match base {

@@ -929,6 +929,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
+ "chrono",
  "llm",
  "mcp",
  "rag",
@@ -2180,6 +2181,7 @@ name = "rag"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "qdrant-client",
  "serde_json",
  "thiserror 2.0.19",

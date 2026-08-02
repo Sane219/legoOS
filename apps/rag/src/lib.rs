@@ -149,6 +149,109 @@ impl RagClient {
     }
 }
 
+/// Long-term agent memory lives in its own collection, keyed by `workspace_id` +
+/// `agent_key` (an arbitrary caller-chosen identifier — e.g. a node id, or a name shared
+/// across nodes/workflows that should draw on the same memory) rather than `document_id`.
+pub const MEMORIES_COLLECTION: &str = "agent_memories";
+
+#[derive(Debug, Clone)]
+pub struct MemoryEntry {
+    pub id: Uuid,
+    pub vector: Vec<f32>,
+    pub workspace_id: Uuid,
+    pub agent_key: String,
+    pub text: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MemoryHit {
+    pub text: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub score: f32,
+}
+
+impl RagClient {
+    pub async fn ensure_memories_collection(&self, vector_size: u64) -> Result<(), RagError> {
+        if self.client.collection_exists(MEMORIES_COLLECTION).await? {
+            return Ok(());
+        }
+        self.client
+            .create_collection(
+                CreateCollectionBuilder::new(MEMORIES_COLLECTION)
+                    .vectors_config(VectorParamsBuilder::new(vector_size, Distance::Cosine)),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Persists one fact/result for `agent_key` in `workspace_id`.
+    pub async fn remember(&self, entry: MemoryEntry) -> Result<(), RagError> {
+        let payload = serde_json::json!({
+            "workspace_id": entry.workspace_id.to_string(),
+            "agent_key": entry.agent_key,
+            "text": entry.text,
+            "created_at": entry.created_at.to_rfc3339(),
+        });
+        let payload: Payload = payload
+            .try_into()
+            .map_err(|e| RagError::Payload(format!("{e:?}")))?;
+
+        self.client
+            .upsert_points(UpsertPointsBuilder::new(
+                MEMORIES_COLLECTION,
+                vec![PointStruct::new(entry.id, entry.vector, payload)],
+            ))
+            .await?;
+        Ok(())
+    }
+
+    /// Finds the `limit` memories most similar to `query_vector` for this `agent_key`,
+    /// scoped to `workspace_id`.
+    pub async fn recall(
+        &self,
+        workspace_id: Uuid,
+        agent_key: &str,
+        query_vector: Vec<f32>,
+        limit: u64,
+    ) -> Result<Vec<MemoryHit>, RagError> {
+        let filter = Filter::must([
+            Condition::matches("workspace_id", workspace_id.to_string()),
+            Condition::matches("agent_key", agent_key.to_string()),
+        ]);
+
+        let response = self
+            .client
+            .query(
+                QueryPointsBuilder::new(MEMORIES_COLLECTION)
+                    .query(query_vector)
+                    .filter(filter)
+                    .limit(limit)
+                    .with_payload(true),
+            )
+            .await?;
+
+        Ok(response
+            .result
+            .into_iter()
+            .filter_map(|point| {
+                let text = point.payload.get("text")?.as_str()?.to_string();
+                let created_at = point
+                    .payload
+                    .get("created_at")?
+                    .as_str()
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                    .map(|dt| dt.with_timezone(&chrono::Utc))?;
+                Some(MemoryHit {
+                    text,
+                    created_at,
+                    score: point.score,
+                })
+            })
+            .collect())
+    }
+}
+
 /// Splits `text` into overlapping chunks of at most `chunk_size` characters, breaking on a
 /// whitespace boundary near the limit when possible so words aren't split mid-word.
 /// Character-based rather than token-based — simple and dependency-free; a token-aware

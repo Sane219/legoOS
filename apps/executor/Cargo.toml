@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+chrono = { version = "0.4.45", features = ["serde"] }
 llm = { version = "0.1.0", path = "../llm" }
 mcp = { version = "0.1.0", path = "../mcp" }
 rag = { version = "0.1.0", path = "../rag" }

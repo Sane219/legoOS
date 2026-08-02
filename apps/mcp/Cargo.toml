@@ -1,20 +1,17 @@
 [package]
-name = "executor"
+name = "mcp"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-llm = { version = "0.1.0", path = "../llm" }
-mcp = { version = "0.1.0", path = "../mcp" }
+rmcp = { version = "3.1.0", features = ["client", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
 serde_json = "1.0.151"
-tokio = { version = "1.53.1", features = ["sync"] }
-uuid = { version = "1.24.0", features = ["serde"] }
+thiserror = "2.0.19"
 
 [dev-dependencies]
-async-trait = "0.1.89"
+anyhow = "1.0.104"
 axum = "0.8.9"
 rmcp = { version = "3.1.0", features = ["server", "macros", "schemars", "transport-streamable-http-server"] }
 serde = { version = "1.0.229", features = ["derive"] }
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
 tokio-util = "0.7.19"
-uuid = { version = "1.24.0", features = ["v4"] }

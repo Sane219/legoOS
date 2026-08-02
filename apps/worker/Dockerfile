@@ -9,6 +9,7 @@ COPY apps/worker/Cargo.toml apps/worker/Cargo.toml
 COPY apps/worker/src apps/worker/src
 COPY apps/executor apps/executor
 COPY apps/llm apps/llm
+COPY apps/mcp apps/mcp
 COPY apps/queue apps/queue
 COPY apps/api/Cargo.toml apps/api/Cargo.toml
 COPY apps/api/src apps/api/src

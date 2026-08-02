@@ -233,6 +233,48 @@ fn propagate(
     }
 }
 
+/// Runs each `{ "mcp_url", "mcp_token"?, "tool", "arguments"? }` spec against its MCP
+/// server and inserts the result into `context` under the tool's name, so the agent's
+/// prompt template can pick it up via `{{tool_name}}` — same mechanism as any other field.
+async fn run_tool_calls(tool_specs: &[Value], context: &mut Value) -> Result<(), String> {
+    if tool_specs.is_empty() {
+        return Ok(());
+    }
+    if !context.is_object() {
+        let previous = std::mem::replace(context, Value::Object(Default::default()));
+        context["input"] = previous;
+    }
+
+    for spec in tool_specs {
+        let url = spec
+            .get("mcp_url")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "tool spec missing \"mcp_url\"".to_string())?;
+        let tool_name = spec
+            .get("tool")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "tool spec missing \"tool\"".to_string())?;
+        let token = spec.get("mcp_token").and_then(Value::as_str);
+        let arguments = spec
+            .get("arguments")
+            .cloned()
+            .unwrap_or_else(|| Value::Object(Default::default()));
+
+        let client = mcp::McpClient::connect(url, token)
+            .await
+            .map_err(|e| format!("MCP connect to {url} failed: {e}"))?;
+        let result = client
+            .call_tool(tool_name, arguments)
+            .await
+            .map_err(|e| format!("MCP tool call {tool_name} failed: {e}"))?;
+        let _ = client.close().await;
+
+        context[tool_name] = result;
+    }
+
+    Ok(())
+}
+
 fn merge_inputs(inputs: &[Value]) -> Value {
     match inputs.len() {
         0 => Value::Object(Default::default()),
@@ -323,10 +365,11 @@ async fn run_node(
                 .get("max_tokens")
                 .and_then(Value::as_u64)
                 .unwrap_or(1024) as u32;
-            // Tool list support (config["tools"]) lands with MCP client support later in Phase 2;
-            // the field is accepted here so node configs can already carry it.
 
-            let context = merge_inputs(inputs);
+            let mut context = merge_inputs(inputs);
+            if let Some(tool_specs) = node.config.get("tools").and_then(Value::as_array) {
+                run_tool_calls(tool_specs, &mut context).await?;
+            }
             let prompt = render_template(prompt_template, &context);
 
             let request = CompletionRequest {

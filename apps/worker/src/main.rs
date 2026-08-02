@@ -18,6 +18,11 @@ async fn main() -> anyhow::Result<()> {
     let database_url = std::env::var("DATABASE_URL").context("DATABASE_URL must be set")?;
     let redis_url =
         std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+    let mcp_credential_key =
+        std::env::var("MCP_CREDENTIAL_KEY").context("MCP_CREDENTIAL_KEY must be set")?;
+    if mcp_credential_key.len() != 64 {
+        anyhow::bail!("MCP_CREDENTIAL_KEY must be 64 hex characters (32 bytes)");
+    }
 
     let pool = PgPoolOptions::new()
         .max_connections(5)
@@ -49,7 +54,7 @@ async fn main() -> anyhow::Result<()> {
                 tracing::info!("worker shutting down");
                 break;
             }
-            _ = tick(&pool, &mut redis, &consumer, provider.as_ref()) => {}
+            _ = tick(&pool, &mut redis, &consumer, provider.as_ref(), &mcp_credential_key) => {}
         }
     }
 
@@ -61,15 +66,16 @@ async fn tick(
     redis: &mut ConnectionManager,
     consumer: &str,
     provider: Option<&Arc<dyn llm::LlmProvider>>,
+    mcp_credential_key: &str,
 ) {
-    if let Err(e) = reclaim_stuck(pool, redis, consumer, provider).await {
+    if let Err(e) = reclaim_stuck(pool, redis, consumer, provider, mcp_credential_key).await {
         tracing::warn!(error = %e, "reclaim pass failed");
     }
 
     match read_new(redis, consumer, 2000).await {
         Ok(entries) => {
             for (entry_id, job) in entries {
-                process_entry(pool, redis, &entry_id, job, provider).await;
+                process_entry(pool, redis, &entry_id, job, provider, mcp_credential_key).await;
             }
         }
         Err(e) => {

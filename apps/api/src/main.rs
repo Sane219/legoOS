@@ -19,6 +19,11 @@ async fn main() -> anyhow::Result<()> {
     let jwt_secret = std::env::var("JWT_SECRET").context("JWT_SECRET must be set")?;
     let redis_url =
         std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+    let mcp_credential_key =
+        std::env::var("MCP_CREDENTIAL_KEY").context("MCP_CREDENTIAL_KEY must be set")?;
+    if mcp_credential_key.len() != 64 {
+        anyhow::bail!("MCP_CREDENTIAL_KEY must be 64 hex characters (32 bytes)");
+    }
 
     let pool = PgPoolOptions::new()
         .max_connections(10)
@@ -41,6 +46,7 @@ async fn main() -> anyhow::Result<()> {
         jwt_secret,
         redis,
         redis_client,
+        mcp_credential_key,
     };
     let app = routes::build(state)
         .layer(

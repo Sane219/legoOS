@@ -15,6 +15,8 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 pub const JWT_SECRET: &str = "test-secret";
+pub const MCP_CREDENTIAL_KEY: &str =
+    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 pub fn redis_client() -> redis::Client {
     let redis_url =
@@ -36,6 +38,7 @@ pub async fn app(pool: PgPool) -> axum::Router {
         jwt_secret: JWT_SECRET.to_string(),
         redis,
         redis_client: redis_client(),
+        mcp_credential_key: MCP_CREDENTIAL_KEY.to_string(),
     })
 }
 
@@ -97,7 +100,7 @@ pub async fn run_execution_inline(pool: &PgPool, execution_id: Uuid, workflow_id
         execution_id,
         workflow_id,
     };
-    worker::run_job(pool, &mut redis, &job, None)
+    worker::run_job(pool, &mut redis, &job, None, MCP_CREDENTIAL_KEY)
         .await
         .expect("worker::run_job failed");
 }

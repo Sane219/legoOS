@@ -70,6 +70,7 @@ pub async fn reclaim_stuck(
     conn: &mut ConnectionManager,
     consumer: &str,
     provider: Option<&Arc<dyn llm::LlmProvider>>,
+    mcp_credential_key: &str,
 ) -> anyhow::Result<()> {
     let pending: StreamPendingCountReply = conn
         .xpending_count(WORKFLOW_RUNS_STREAM, WORKFLOW_RUNS_GROUP, "-", "+", 50)
@@ -98,7 +99,17 @@ pub async fn reclaim_stuck(
 
         for claimed_entry in claimed.ids {
             match job_from_entry(&claimed_entry) {
-                Some(job) => process_entry(pool, conn, &claimed_entry.id, job, provider).await,
+                Some(job) => {
+                    process_entry(
+                        pool,
+                        conn,
+                        &claimed_entry.id,
+                        job,
+                        provider,
+                        mcp_credential_key,
+                    )
+                    .await
+                }
                 None => {
                     let _: redis::RedisResult<()> = conn
                         .xack(
@@ -142,14 +153,74 @@ pub async fn process_entry(
     entry_id: &str,
     job: RunJob,
     provider: Option<&Arc<dyn llm::LlmProvider>>,
+    mcp_credential_key: &str,
 ) {
     tracing::info!(execution_id = %job.execution_id, "processing workflow run");
-    if let Err(e) = run_job(pool, redis, &job, provider).await {
+    if let Err(e) = run_job(pool, redis, &job, provider, mcp_credential_key).await {
         tracing::error!(execution_id = %job.execution_id, error = %e, "workflow run failed");
     }
     let _: redis::RedisResult<()> = redis
         .xack(WORKFLOW_RUNS_STREAM, WORKFLOW_RUNS_GROUP, &[entry_id])
         .await;
+}
+
+/// Agent node `tools` entries can reference a saved workspace MCP connection by id
+/// (`"mcp_connection_id"`) instead of embedding a raw URL/token in the workflow config.
+/// This resolves each one to the `mcp_url`/`mcp_token` fields `executor` actually reads,
+/// decrypting the stored token — scoped to `workspace_id` so a workflow can't reach
+/// another workspace's connection by guessing its id.
+async fn resolve_mcp_connections(
+    pool: &PgPool,
+    workspace_id: Uuid,
+    mcp_credential_key: &str,
+    nodes: &mut [executor::Node],
+) -> anyhow::Result<()> {
+    for node in nodes.iter_mut() {
+        if node.node_type != "agent" {
+            continue;
+        }
+        let Some(tools) = node.config.get_mut("tools").and_then(Value::as_array_mut) else {
+            continue;
+        };
+
+        for spec in tools.iter_mut() {
+            let Some(connection_id) = spec
+                .get("mcp_connection_id")
+                .and_then(Value::as_str)
+                .and_then(|s| Uuid::parse_str(s).ok())
+            else {
+                continue;
+            };
+
+            let row = sqlx::query_as::<_, (String, Option<String>)>(
+                "SELECT url, encrypted_bearer_token FROM mcp_connections
+                 WHERE id = $1 AND workspace_id = $2",
+            )
+            .bind(connection_id)
+            .bind(workspace_id)
+            .fetch_optional(pool)
+            .await?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "mcp connection {connection_id} not found in workspace {workspace_id}"
+                )
+            })?;
+
+            let (url, encrypted_token) = row;
+            let token = encrypted_token
+                .map(|t| mcp::decrypt_token(mcp_credential_key, &t))
+                .transpose()
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+            if let Some(map) = spec.as_object_mut() {
+                map.insert("mcp_url".to_string(), Value::String(url));
+                if let Some(token) = token {
+                    map.insert("mcp_token".to_string(), Value::String(token));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn to_trace_event(result: &executor::NodeResult) -> TraceEvent {
@@ -171,10 +242,16 @@ pub async fn run_job(
     redis: &mut ConnectionManager,
     job: &RunJob,
     provider: Option<&Arc<dyn llm::LlmProvider>>,
+    mcp_credential_key: &str,
 ) -> anyhow::Result<()> {
     sqlx::query("UPDATE workflow_executions SET status = 'running' WHERE id = $1")
         .bind(job.execution_id)
         .execute(pool)
+        .await?;
+
+    let workspace_id: Uuid = sqlx::query_scalar("SELECT workspace_id FROM workflows WHERE id = $1")
+        .bind(job.workflow_id)
+        .fetch_one(pool)
         .await?;
 
     let node_rows = sqlx::query_as::<_, (Uuid, String, Value)>(
@@ -191,7 +268,7 @@ pub async fn run_job(
     .fetch_all(pool)
     .await?;
 
-    let nodes: Vec<executor::Node> = node_rows
+    let mut nodes: Vec<executor::Node> = node_rows
         .into_iter()
         .map(|(id, node_type, config)| executor::Node {
             id,
@@ -199,6 +276,8 @@ pub async fn run_job(
             config,
         })
         .collect();
+    resolve_mcp_connections(pool, workspace_id, mcp_credential_key, &mut nodes).await?;
+
     let edges: Vec<executor::Edge> = edge_rows
         .into_iter()
         .map(|(source, target, condition)| executor::Edge {

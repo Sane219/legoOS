@@ -151,3 +151,35 @@ pub struct ExecutionResponse {
     pub finished_at: Option<DateTime<Utc>>,
     pub nodes: Vec<ExecutionNodeResponse>,
 }
+
+#[derive(Debug, sqlx::FromRow)]
+pub struct McpConnectionRow {
+    pub id: Uuid,
+    pub name: String,
+    pub url: String,
+    pub has_token: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Never carries the token (encrypted or not) back to the client — write-only from the
+/// frontend's perspective, same as a password field.
+#[derive(Debug, Serialize)]
+pub struct McpConnectionResponse {
+    pub id: Uuid,
+    pub name: String,
+    pub url: String,
+    pub has_token: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+impl From<McpConnectionRow> for McpConnectionResponse {
+    fn from(row: McpConnectionRow) -> Self {
+        McpConnectionResponse {
+            id: row.id,
+            name: row.name,
+            url: row.url,
+            has_token: row.has_token,
+            created_at: row.created_at,
+        }
+    }
+}

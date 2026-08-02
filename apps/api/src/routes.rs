@@ -3,7 +3,7 @@ use axum::{
     routing::{get, post},
 };
 
-use crate::{handlers, state::AppState, trace, workflows, workspaces};
+use crate::{handlers, mcp_connections, state::AppState, trace, workflows, workspaces};
 
 pub fn build(state: AppState) -> Router {
     Router::new()
@@ -39,6 +39,18 @@ pub fn build(state: AppState) -> Router {
         .route(
             "/api/workspaces/{workspace_id}/workflows/{workflow_id}/executions/{execution_id}/trace",
             get(trace::execution_trace),
+        )
+        .route(
+            "/api/workspaces/{workspace_id}/mcp-connections",
+            get(mcp_connections::list_connections).post(mcp_connections::create_connection),
+        )
+        .route(
+            "/api/workspaces/{workspace_id}/mcp-connections/{connection_id}",
+            axum::routing::delete(mcp_connections::delete_connection),
+        )
+        .route(
+            "/api/workspaces/{workspace_id}/mcp-connections/{connection_id}/test",
+            post(mcp_connections::test_connection),
         )
         .with_state(state)
 }

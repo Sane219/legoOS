@@ -10,6 +10,7 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 
 const JWT_SECRET: &str = "test-secret";
+const MCP_CREDENTIAL_KEY: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 async fn app(pool: PgPool) -> axum::Router {
     let redis_url =
@@ -24,6 +25,7 @@ async fn app(pool: PgPool) -> axum::Router {
         jwt_secret: JWT_SECRET.to_string(),
         redis,
         redis_client: client,
+        mcp_credential_key: MCP_CREDENTIAL_KEY.to_string(),
     })
 }
 

@@ -10,6 +10,7 @@ env:
   DATABASE_URL: postgres://legoos:legoos@localhost:5432/legoos
   JWT_SECRET: ci-test-secret
   REDIS_URL: redis://localhost:6379
+  MCP_CREDENTIAL_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
 jobs:
   backend:

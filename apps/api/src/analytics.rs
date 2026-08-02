@@ -28,8 +28,8 @@ pub async fn workflow_analytics(
              e.status,
              e.started_at,
              COALESCE(SUM((n.output->>'cost_usd')::double precision), 0) AS total_cost_usd,
-             COALESCE(SUM((n.output->>'input_tokens')::bigint), 0) AS total_input_tokens,
-             COALESCE(SUM((n.output->>'output_tokens')::bigint), 0) AS total_output_tokens,
+             COALESCE(SUM((n.output->>'input_tokens')::integer), 0) AS total_input_tokens,
+             COALESCE(SUM((n.output->>'output_tokens')::integer), 0) AS total_output_tokens,
              AVG((n.output->>'score')::double precision) AS avg_eval_score
          FROM workflow_executions e
          LEFT JOIN workflow_execution_nodes n ON n.execution_id = e.id

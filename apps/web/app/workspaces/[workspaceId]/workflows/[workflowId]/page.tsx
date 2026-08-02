@@ -102,6 +102,12 @@ export default function WorkflowCanvasPage() {
         >
           Schedules
         </Link>
+        <Link
+          href={`/workspaces/${params.workspaceId}/workflows/${params.workflowId}/analytics`}
+          className="text-sm text-zinc-500 hover:underline"
+        >
+          Analytics
+        </Link>
       </div>
       <WorkflowCanvas
         graph={graph}

@@ -46,7 +46,7 @@ file up to date — see [CLAUDE.md](../CLAUDE.md) rules.
 - [x] Build the scheduling UI (create/edit/pause a scheduled trigger for a workflow)
 - [x] Implement basic evaluation scoring for agent outputs (rule-based and/or LLM-judge)
 - [x] Implement cost tracking per execution (tokens and estimated $ per LLM call)
-- [ ] Build the evaluation/cost dashboard (trends over time, per-agent and per-workflow)
+- [x] Build the evaluation/cost dashboard (trends over time, per-agent and per-workflow)
 
 ## Phase 4: Infra Maturity
 

@@ -108,6 +108,16 @@ export interface WorkflowSchedule {
   created_at: string;
 }
 
+export interface ExecutionAnalytics {
+  execution_id: string;
+  status: string;
+  started_at: string;
+  total_cost_usd: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  avg_eval_score: number | null;
+}
+
 export interface ApprovalGate {
   id: string;
   execution_id: string;
@@ -371,6 +381,17 @@ export function deleteSchedule(
     `/api/workspaces/${workspaceId}/workflows/${workflowId}/schedules/${scheduleId}`,
     token,
     { method: "DELETE" },
+  );
+}
+
+export function getWorkflowAnalytics(
+  token: string,
+  workspaceId: string,
+  workflowId: string,
+): Promise<ExecutionAnalytics[]> {
+  return authedRequest(
+    `/api/workspaces/${workspaceId}/workflows/${workflowId}/analytics`,
+    token,
   );
 }
 

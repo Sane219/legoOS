@@ -256,3 +256,39 @@ impl From<DocumentRow> for DocumentResponse {
         }
     }
 }
+
+#[derive(Debug, sqlx::FromRow)]
+pub struct ScheduleRow {
+    pub id: Uuid,
+    pub workflow_id: Uuid,
+    pub cron_expression: String,
+    pub enabled: bool,
+    pub next_run_at: DateTime<Utc>,
+    pub last_run_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ScheduleResponse {
+    pub id: Uuid,
+    pub workflow_id: Uuid,
+    pub cron_expression: String,
+    pub enabled: bool,
+    pub next_run_at: DateTime<Utc>,
+    pub last_run_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+impl From<ScheduleRow> for ScheduleResponse {
+    fn from(row: ScheduleRow) -> Self {
+        ScheduleResponse {
+            id: row.id,
+            workflow_id: row.workflow_id,
+            cron_expression: row.cron_expression,
+            enabled: row.enabled,
+            next_run_at: row.next_run_at,
+            last_run_at: row.last_run_at,
+            created_at: row.created_at,
+        }
+    }
+}

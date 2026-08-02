@@ -5,7 +5,7 @@ use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing_subscriber::EnvFilter;
-use worker::{ensure_group, process_entry, read_new, reclaim_stuck};
+use worker::{ensure_group, process_entry, read_new, reclaim_stuck, run_due_schedules};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -104,6 +104,10 @@ async fn tick(
     .await
     {
         tracing::warn!(error = %e, "reclaim pass failed");
+    }
+
+    if let Err(e) = run_due_schedules(pool, redis).await {
+        tracing::warn!(error = %e, "schedule tick failed");
     }
 
     match read_new(redis, consumer, 2000).await {

@@ -7,6 +7,7 @@ pub mod jwt;
 pub mod mcp_connections;
 pub mod models;
 pub mod routes;
+pub mod schedules;
 pub mod state;
 pub mod trace;
 pub mod workflows;

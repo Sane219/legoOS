@@ -131,6 +131,72 @@ pub async fn reclaim_stuck(
     Ok(())
 }
 
+/// Fires every enabled schedule whose `next_run_at` has passed: creates a `pending`
+/// execution and enqueues it, same as an API-triggered run. `FOR UPDATE SKIP LOCKED` means
+/// multiple worker processes calling this concurrently split the due schedules between them
+/// rather than double-firing the same one.
+pub async fn run_due_schedules(pool: &PgPool, redis: &mut ConnectionManager) -> anyhow::Result<()> {
+    let mut tx = pool.begin().await?;
+    let due: Vec<(Uuid, Uuid, String)> = sqlx::query_as(
+        "SELECT id, workflow_id, cron_expression FROM workflow_schedules
+         WHERE enabled AND next_run_at <= now()
+         FOR UPDATE SKIP LOCKED",
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+
+    let mut jobs = Vec::new();
+    for (schedule_id, workflow_id, cron_expression) in due {
+        match queue::next_run_after(&cron_expression, chrono::Utc::now()) {
+            Ok(next_run_at) => {
+                let execution_id: Uuid = sqlx::query_scalar(
+                    "INSERT INTO workflow_executions (workflow_id, status) VALUES ($1, 'pending')
+                     RETURNING id",
+                )
+                .bind(workflow_id)
+                .fetch_one(&mut *tx)
+                .await?;
+
+                sqlx::query(
+                    "UPDATE workflow_schedules SET next_run_at = $1, last_run_at = now()
+                     WHERE id = $2",
+                )
+                .bind(next_run_at)
+                .bind(schedule_id)
+                .execute(&mut *tx)
+                .await?;
+
+                jobs.push(RunJob {
+                    execution_id,
+                    workflow_id,
+                });
+            }
+            Err(e) => {
+                // Shouldn't happen (the API validates the expression at creation time), but
+                // a schedule that can never compute its next run would otherwise fire on
+                // every tick forever — disable it instead.
+                tracing::error!(schedule_id = %schedule_id, error = %e, "disabling schedule with an unparseable cron expression");
+                sqlx::query("UPDATE workflow_schedules SET enabled = false WHERE id = $1")
+                    .bind(schedule_id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+        }
+    }
+    tx.commit().await?;
+
+    // Enqueued only after commit: a worker picking a job up must always find its
+    // execution/workflow rows already there.
+    for job in jobs {
+        let job_json = serde_json::to_string(&job).expect("RunJob always serializes");
+        let _: redis::RedisResult<String> = redis
+            .xadd(WORKFLOW_RUNS_STREAM, "*", &[(JOB_FIELD, job_json)])
+            .await;
+    }
+
+    Ok(())
+}
+
 async fn dead_letter(conn: &mut ConnectionManager, entry_id: &str) -> anyhow::Result<()> {
     tracing::error!(
         entry_id,

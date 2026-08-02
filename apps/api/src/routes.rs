@@ -4,7 +4,8 @@ use axum::{
 };
 
 use crate::{
-    approvals, documents, handlers, mcp_connections, state::AppState, trace, workflows, workspaces,
+    approvals, documents, handlers, mcp_connections, schedules, state::AppState, trace, workflows,
+    workspaces,
 };
 
 pub fn build(state: AppState) -> Router {
@@ -73,6 +74,15 @@ pub fn build(state: AppState) -> Router {
         .route(
             "/api/workspaces/{workspace_id}/documents/{document_id}",
             axum::routing::delete(documents::delete_document),
+        )
+        .route(
+            "/api/workspaces/{workspace_id}/workflows/{workflow_id}/schedules",
+            get(schedules::list_schedules).post(schedules::create_schedule),
+        )
+        .route(
+            "/api/workspaces/{workspace_id}/workflows/{workflow_id}/schedules/{schedule_id}",
+            axum::routing::patch(schedules::update_schedule)
+                .delete(schedules::delete_schedule),
         )
         .with_state(state)
 }

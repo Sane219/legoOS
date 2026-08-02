@@ -69,6 +69,17 @@ async fn run_trace_socket(
     execution_id: Uuid,
     mut stream: redis::aio::PubSubStream,
 ) -> anyhow::Result<()> {
+    // Status is read *before* nodes, not after: run_job commits the final status and all
+    // node rows in one transaction, so once this read observes a terminal status, every
+    // node row is guaranteed already committed too — the nodes query below (issued later)
+    // can only see that commit or a newer one, never miss it. Reading them in the other
+    // order would leave a window where nodes-query runs pre-commit and status-query runs
+    // post-commit, replaying zero nodes for a "terminal" execution.
+    let status: String = sqlx::query_scalar("SELECT status FROM workflow_executions WHERE id = $1")
+        .bind(execution_id)
+        .fetch_one(&state.pool)
+        .await?;
+
     let existing_nodes = sqlx::query_as::<_, (Uuid, String, Option<Value>, Option<String>)>(
         "SELECT node_id, status, output, error FROM workflow_execution_nodes WHERE execution_id = $1",
     )
@@ -88,10 +99,6 @@ async fn run_trace_socket(
             .await?;
     }
 
-    let status: String = sqlx::query_scalar("SELECT status FROM workflow_executions WHERE id = $1")
-        .bind(execution_id)
-        .fetch_one(&state.pool)
-        .await?;
     if status != "pending" && status != "running" {
         let event = queue::TraceEvent::Final { status };
         socket
